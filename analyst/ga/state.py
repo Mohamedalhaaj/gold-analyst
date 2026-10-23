@@ -246,8 +246,8 @@ def run_state(view, processed_days, now, run_id, head_sha, verdict, write):
     ct = counted(rows_all)
     y = [r["settled"]["outcome"]["y"] for r in ct]
     E = _eproc().e_value(y)
-    if promoted_day:
-        K = _eproc().k_value([r["settled"]["outcome"]["y"] for r in ct if r["day"] > promoted_day])
+    # K over post-promotion counted trades; 1.0 before a promotion (R-AN-52 clarification A4, as lab R-V1-34)
+    K = _eproc().k_value([r["settled"]["outcome"]["y"] for r in ct if r["day"] > promoted_day]) if promoted_day else 1.0
     term = [r for r in rows_all if r["terminal"]["status"] != "skipped:holiday"][-40:]
     bad = [r for r in term if r["overlay"] or r["terminal"]["status"].startswith(("missed:", "no_call:"))]
     share = len(bad) / len(term) if term else 0.0

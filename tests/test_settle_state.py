@@ -48,6 +48,7 @@ def test_settle_end_to_end_live(tmp_path):
     stj = h.main_json("analyst/STATE.json")
     assert stj["state"] == "SHAKEDOWN" and stj["n"] == 0 and stj["calls_enabled"] is True
     assert stj["last_processed_day"] == "2026-11-10"
+    assert stj["K"] == 1.0                     # before a promotion K = 1.0 (R-AN-52, §16.18 A4; lab R-V1-34)
     led = list(csv.DictReader(io.StringIO(h.world.main_file("analyst/ledger.csv").decode())))
     assert [r["call_id"] for r in led] == ["2026-11-10_W1", "2026-11-10_W2", "2026-11-11_W1"]
     assert led[2]["status"] == "missed:trigger" and led[2]["twin_status"] == ""   # 11-11 not in the store yet
@@ -131,6 +132,7 @@ def test_promotion_needs_all_of_p1_to_p7():
     view, days = records_view(ys)
     st, evs = evaluate(view, days, None)                                     # P7: no verdict -> never promoted
     assert "PROMOTED" not in [e["event"] for e in evs] and st["state"] == "TESTING"
+    assert st["K"] == 1.0
     view, days = records_view(ys, d_w=50.0)                                  # P4: all of it was drift
     assert "PROMOTED" not in [e["event"] for e in evaluate(view, days, SOUND)[1]]
 

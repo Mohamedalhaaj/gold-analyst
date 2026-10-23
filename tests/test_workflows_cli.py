@@ -63,8 +63,9 @@ def test_settle_and_track_and_deploy():
 
 
 def test_no_secret_material_in_files():
+    # a 32-hex run must stand alone: the tail of a 40-hex git sha (STATE.json's head_sha) is not a key
     pat = re.compile(r"(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-ant-[A-Za-z0-9-]{10,}|"
-                     r"-----BEGIN [A-Z ]*PRIVATE KEY-----|[0-9a-f]{32}(?![0-9a-f]))")
+                     r"-----BEGIN [A-Z ]*PRIVATE KEY-----|(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f]))")
     allowed_hex = re.compile(r"^[0-9a-f]{64}$")
     for p in ROOT.rglob("*"):
         if not p.is_file() or ".venv" in p.parts or ".git" in p.parts or "vendor" in p.parts \

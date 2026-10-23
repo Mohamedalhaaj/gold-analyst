@@ -4,3 +4,4 @@ __pycache__/
 .venv/
 .pytest_cache/
 site/analyst/index.html
+.wrangler/
