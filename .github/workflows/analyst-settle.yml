@@ -1,0 +1,41 @@
+# analyst-settle (prereg §4, §6, §9; register R-AN-39, R-AN-40): the closer, settlement on the mirrored system
+# store in window order, the twins, the state latches, STATE.json and ledger.csv. Script only, no model.
+# It starts on the mirror push (the export job in gold-forward-watch pushes mirror/** with its own deploy key),
+# on a daily backstop and by hand. No secrets.
+name: analyst-settle
+
+on:
+  push:
+    branches: [main]
+    paths: ["mirror/**"]
+  schedule:
+    - cron: "15 23 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: analyst
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+  actions: read
+
+jobs:
+  settle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.26"
+
+      - name: Settle
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: uv run --frozen --no-dev python -I analyst/jobs/settle_job.py

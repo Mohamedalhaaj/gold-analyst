@@ -1,0 +1,8 @@
+{
+ "L_min": 50,
+ "T_run_min": 0,
+ "T_setup_min": 0,
+ "canary_report_sha256": null,
+ "concurrency_min": 20,
+ "provisional": true
+}

@@ -1,0 +1,8 @@
+{
+  // The analyst page (ANALYST_V1_PREREG.md §7): a separate Worker serving static assets, /analyst/.
+  // It does not touch the gold-watch site's deploy. The token and account id come from the analyst-pages
+  // environment of analyst-deploy.yml; nothing secret is in this file.
+  "name": "gold-analyst",
+  "compatibility_date": "2026-10-01",
+  "assets": { "directory": "../site" }
+}

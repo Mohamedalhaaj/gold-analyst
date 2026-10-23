@@ -1,0 +1,121 @@
+"""Repository rules: no agent instruction files (R1(a)), vendored files pinned, holiday table reproduced, manifest."""
+import base64
+import csv
+import hashlib
+import io
+from pathlib import Path
+
+import pytest
+
+from ga import TZDATA_VERSION, frozen
+
+ROOT = Path(__file__).resolve().parents[1]
+EPROC_SHA = "ee8d456ae3b5ddd1112bad92d12fffa95d2b12e0559335233c6a9b3a68067973"
+BLS_SHA = "7e829d6c5acd861c276552d4086a2c639cbec03fc66242b859cd9d4fabdef45d"
+FOMC_SHA = "dd709aee9821d0e1b4a1e9e0a8939422e92bb9520961090e31e96f4d30dc10f5"
+REGISTER_HOLIDAYS = {
+    ("NYSE", "full"): "2026-11-26 2026-12-25 2027-01-01 2027-01-18 2027-02-15 2027-03-26 2027-05-31 2027-06-18 "
+                      "2027-07-05 2027-09-06 2027-11-25 2027-12-24",
+    ("NYSE", "early"): "2026-11-27 2026-12-24 2027-11-26",
+    ("LSE", "full"): "2026-12-25 2026-12-28 2027-01-01 2027-03-26 2027-03-29 2027-05-03 2027-05-31 2027-08-30 "
+                     "2027-12-27 2027-12-28",
+    ("LSE", "early"): "2026-12-24 2026-12-31 2027-12-24 2027-12-31",
+}
+
+
+def sha(p):
+    return hashlib.sha256((ROOT / p).read_bytes()).hexdigest()
+
+
+def test_no_agent_instruction_files():
+    bad = [p for p in ROOT.rglob("*") if ".venv" not in p.parts and ".git" not in p.parts
+           and (p.name in ("CLAUDE.md", "AGENTS.md") or p.name == ".claude")]
+    assert bad == []
+
+
+def test_vendored_eproc_is_the_labs():
+    assert sha("analyst/vendor/eproc.py") == EPROC_SHA
+
+
+def test_frozen_calendars_are_r_v1_15s():
+    assert sha("analyst/calendars/bls_2026_2027.csv") == BLS_SHA
+    assert sha("analyst/calendars/fomc_2026_2027.csv") == FOMC_SHA
+
+
+def test_vendored_tzdata_is_pinned_and_used():
+    import sys
+    import zoneinfo
+    import tzdata
+    assert tzdata.__version__ == TZDATA_VERSION == "2026.3"
+    assert Path(tzdata.__file__).resolve().is_relative_to(ROOT / "analyst" / "vendor")
+    assert zoneinfo.TZPATH == ()
+    assert "tzdata" in sys.modules
+
+
+def test_holiday_table_has_the_registers_rows():
+    rows = list(csv.DictReader(io.StringIO((ROOT / "analyst/tables/holidays.csv").read_text())))
+    got = {}
+    for r in rows:
+        got.setdefault((r["exchange"], r["kind"]), []).append(r["date"])
+        if r["kind"] == "early":
+            assert r["close_utc"] == (r["date"] + ("T18:00:00Z" if r["exchange"] == "NYSE" else "T12:30:00Z"))
+        else:
+            assert r["close_utc"] == ""
+    assert {k: " ".join(v) for k, v in got.items()} == REGISTER_HOLIDAYS
+
+
+def test_holiday_table_regenerates_with_locked_pmc():
+    pytest.importorskip("pandas_market_calendars")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("mh", ROOT / "tools" / "make_holidays.py")
+    mh = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mh)
+    assert mh.render("2026-10-01", "2027-12-31") == (ROOT / "analyst/tables/holidays.csv").read_text()
+
+
+def test_manifest_is_current():
+    assert frozen.verify(ROOT) == [], "run: uv run python -I analyst/jobs/make_frozen.py"
+
+
+def test_manifest_lists_the_frozen_set():
+    paths = [l.split("  ", 1)[1] for l in (ROOT / "analyst/FROZEN_ANALYST.sha256").read_text().splitlines()]
+    assert paths == sorted(paths)
+    for need in ("analyst/ROUTINE_PROMPT.md", "analyst/prompts/system.md", "analyst/prompts/lesson.md",
+                 "analyst/prompts/revision.md", "analyst/schema/plan.schema.json", "analyst/run_window.py",
+                 "analyst/ga/context.py", "analyst/ga/dref.py", "analyst/ga/settle.py", "analyst/vendor/eproc.py",
+                 "analyst/vendor/tzdata/__init__.py", "analyst/tables/holidays.csv", "analyst/playbooks/v0.md",
+                 "analyst/PARAMS.json", "analyst/calendars/bls_2026_2027.csv"):
+        assert need in paths
+    assert not any(p.startswith("analyst/display/") for p in paths)
+
+
+def test_tzdata_files_match_the_wheel_record():
+    """The vendored tzdata files are the tzdata 2026.3 wheel's (RECORD hashes copied here at the build)."""
+    rec = ROOT / "analyst" / "vendor" / "tzdata.RECORD"
+    for line in rec.read_text().splitlines():
+        p, h, _ = line.split(",")
+        if not p.startswith("tzdata/") or not h:
+            continue
+        dig = base64.urlsafe_b64encode(hashlib.sha256((ROOT / "analyst/vendor" / p).read_bytes()).digest())
+        assert h == "sha256=" + dig.rstrip(b"=").decode(), p
+
+
+def test_session_modules_use_only_the_standard_library():
+    """The routine session imports nothing outside the stdlib and analyst/vendor (R1 Isolation (d))."""
+    import ast
+    stdlib = {"argparse", "csv", "datetime", "hashlib", "io", "json", "lzma", "math", "os", "re", "shutil",
+              "statistics", "struct", "subprocess", "sys", "tempfile", "time", "urllib", "zoneinfo", "pathlib"}
+    for f in ["run_window.py"] + [f"ga/{n}.py" for n in ("__init__", "clock", "context", "dref", "examlock",
+                                                           "gitops", "hours", "memory", "paths", "plan", "rec",
+                                                           "records", "repo", "session", "store", "tables",
+                                                           "weekly", "witness")]:
+        tree = ast.parse((ROOT / "analyst" / f).read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                mods = [a.name.split(".")[0] for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                mods = [node.module.split(".")[0]]
+            else:
+                continue
+            for m in mods:
+                assert m in stdlib or m in ("ga", "tzdata"), (f, m)

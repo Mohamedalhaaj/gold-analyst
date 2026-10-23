@@ -1,0 +1,25 @@
+[project]
+name = "gold-analyst"
+version = "1.0.0"
+description = "Analyst v1: a pre-registered paper test of an LLM analyst for XAUUSD (ANALYST_V1_PREREG.md DRAFT v0.5)"
+requires-python = ">=3.12"
+# Runtime of the script-only workflows (analyst-settle needs numpy for the vendored lab e-process).
+# The routine session itself uses only the standard library and analyst/vendor (tzdata 2026.3 vendored).
+dependencies = [
+    "numpy==2.5.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+    "pandas==3.0.5",
+    "pandas-market-calendars==5.4.0",
+    "pyyaml==6.0.3",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

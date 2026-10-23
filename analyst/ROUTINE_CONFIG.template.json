@@ -1,0 +1,29 @@
+{
+ "schema": "analyst-routine-config/1",
+ "note": "TEMPLATE for the owner (not an export). After creating the routines, the owner exports the real configuration with RemoteTrigger get into analyst/ROUTINE_CONFIG.json (register R-AN-61), minus anything secret. Prompts are the one-line texts below; each points to a section of the frozen analyst/ROUTINE_PROMPT.md.",
+ "exported_utc": null,
+ "environment": {
+  "name": "gold-analyst",
+  "network": {"mode": "custom allowlist", "allow": ["the git proxy (default)", "datafeed.dukascopy.com"]},
+  "secrets": "none",
+  "setup": "none (dependencies are vendored; python3 >= 3.10 from the image)"
+ },
+ "routines": [
+  {"name": "analyst-w1", "trigger_id": null, "repo": "Mohamedalhaaj/gold-analyst", "enabled": true,
+   "crons": ["20 6,7 * * 1-5"], "model": "claude-opus-5-5", "effort": null,
+   "allowed_tools": ["Bash", "Read", "Write"], "branch_pushes": "default (claude/* only); unrestricted off",
+   "prompt": "Follow the section CALL of analyst/ROUTINE_PROMPT.md exactly.", "prompt_sha256": null},
+  {"name": "analyst-w2", "trigger_id": null, "repo": "Mohamedalhaaj/gold-analyst", "enabled": true,
+   "crons": ["50 12,13 * * 1-5"], "model": "claude-opus-5-5", "effort": null,
+   "allowed_tools": ["Bash", "Read", "Write"], "branch_pushes": "default (claude/* only); unrestricted off",
+   "prompt": "Follow the section CALL of analyst/ROUTINE_PROMPT.md exactly.", "prompt_sha256": null},
+  {"name": "analyst-lesson", "trigger_id": null, "repo": "Mohamedalhaaj/gold-analyst", "enabled": true,
+   "crons": ["40 16 * * 2-6"], "model": "claude-opus-5-5", "effort": null,
+   "allowed_tools": ["Bash", "Read", "Write"], "branch_pushes": "default (claude/* only); unrestricted off",
+   "prompt": "Follow the section LESSON of analyst/ROUTINE_PROMPT.md exactly.", "prompt_sha256": null},
+  {"name": "analyst-revision", "trigger_id": null, "repo": "Mohamedalhaaj/gold-analyst", "enabled": true,
+   "crons": ["0 18,22 * * 6"], "model": "claude-opus-5-5", "effort": null,
+   "allowed_tools": ["Bash", "Read", "Write"], "branch_pushes": "default (claude/* only); unrestricted off",
+   "prompt": "Follow the section REVISION of analyst/ROUTINE_PROMPT.md exactly.", "prompt_sha256": null}
+ ]
+}

@@ -1,0 +1,40 @@
+# analyst-track (prereg R8; register R-AN-65): provisional hourly tracking of one paper trade, display only.
+# Dispatched by analyst-merge after a buy or sell lock (no schedule trigger). It sleeps until each hour file is due
+# (h + 1 h + L), commits site/track/<call_id>.json and dispatches analyst-deploy; it never holds the Cloudflare token.
+name: analyst-track
+
+on:
+  workflow_dispatch:
+    inputs:
+      call_id:
+        description: "call_id (YYYY-MM-DD_W1|W2)"
+        required: true
+        type: string
+
+concurrency:
+  group: analyst-track-${{ inputs.call_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Track
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CALL_ID: ${{ inputs.call_id }}
+        run: python -I analyst/jobs/track_job.py

@@ -1,0 +1,56 @@
+# analyst-canary-poll (prereg R5 C8; register R-AN-72): hour-file availability for the canary. Three jobs a weekday,
+# each polling up to ~6 h; it exits at once unless analyst/MODE.json is in canary mode. Commits only
+# analyst/canary/hours/. No secrets.
+name: analyst-canary-poll
+
+on:
+  schedule:
+    - cron: "0 1,6,11 * * 1-5"
+  workflow_dispatch:
+
+concurrency:
+  group: analyst-canary-poll
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Canary mode only
+        id: mode
+        run: |
+          python -I -c "import json,sys; sys.exit(0 if json.load(open('analyst/MODE.json'))['mode']=='canary' else 1)" \
+            && echo "canary=1" >> "$GITHUB_OUTPUT" || echo "not in canary mode"
+
+      - name: Poll
+        if: steps.mode.outputs.canary == '1'
+        run: python -I analyst/jobs/canary_poll.py --hours 5.75
+
+      - name: Commit
+        if: steps.mode.outputs.canary == '1' && !cancelled()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add analyst/canary/hours
+          outside=$(git diff --cached --name-only | grep -v '^analyst/canary/hours/' || true)
+          if [ -n "$outside" ]; then echo "staged outside analyst/canary/hours"; exit 1; fi
+          if ! git diff --cached --quiet; then
+            git commit -q -m "analyst-canary-poll $(date -u +%Y-%m-%dT%H:%MZ)"
+            for i in 1 2 3 4 5; do
+              git pull -q --rebase && git push -q && exit 0
+              echo "push attempt $i failed"; sleep 20
+            done
+            exit 1
+          fi

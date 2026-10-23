@@ -1,0 +1,8 @@
+{
+ "canary_from": "2026-10-26",
+ "canary_to": null,
+ "live_from": null,
+ "mode": "canary",
+ "note": "canary mode (prereg R5): set by the build on 2026-10-23; the owner sets canary_from to the first canary weekday when the routines are created, and canary_to when the canary ends",
+ "set_utc": "2026-10-23T00:00:00Z"
+}

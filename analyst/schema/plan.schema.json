@@ -1,0 +1,30 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "analyst-plan/1",
+ "title": "plan.json (ANALYST_V1_PREREG.md §3 Schema; register R-AN-26). Lengths of reason_ar (1-400) and key_risks_ar (0-300) are enforced in code, not here.",
+ "type": "object",
+ "oneOf": [
+  {
+   "properties": {
+    "action": {"enum": ["buy", "sell"]},
+    "stop_mult": {"enum": [1.0, 1.5, 2.0]},
+    "target_mult": {"enum": [1.0, 1.5, 2.0, 3.0]},
+    "confidence": {"enum": ["low", "medium", "high"]},
+    "reason_ar": {"type": "string"},
+    "key_risks_ar": {"type": "string"}
+   },
+   "required": ["action", "stop_mult", "target_mult", "confidence", "reason_ar", "key_risks_ar"],
+   "additionalProperties": false
+  },
+  {
+   "properties": {
+    "action": {"const": "stay_out"},
+    "confidence": {"enum": ["low", "medium", "high"]},
+    "reason_ar": {"type": "string"},
+    "key_risks_ar": {"type": "string"}
+   },
+   "required": ["action", "confidence", "reason_ar", "key_risks_ar"],
+   "additionalProperties": false
+  }
+ ]
+}

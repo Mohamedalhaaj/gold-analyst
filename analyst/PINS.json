@@ -1,0 +1,9 @@
+{
+ "effort": null,
+ "freeze_tag": "analyst-v1-freeze",
+ "judge_site_url": "https://gold-watch-mq1dqc.xauusd-quant.workers.dev",
+ "model": "claude-opus-5-5",
+ "page_url": "https://gold-analyst.xauusd-quant.workers.dev/analyst/",
+ "repo": "Mohamedalhaaj/gold-analyst",
+ "witness_issue": 1
+}

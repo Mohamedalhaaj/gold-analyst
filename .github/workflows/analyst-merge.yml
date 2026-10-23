@@ -1,0 +1,39 @@
+# analyst-merge (ANALYST_V1_PREREG.md §3 Lock evidence, R1(c); register R-AN-32..R-AN-39). Script only, no model.
+# It runs MAIN's code: the checkout is main, and the pushed commit is fetched only as data (diff and show).
+# It posts the witness comment on the pinned issue, copies the one allowed file byte for byte, writes the terminal
+# record and the chain, runs the closer, and dispatches analyst-track after a buy or sell lock. No secrets.
+name: analyst-merge
+
+on:
+  push:
+    branches: ["claude/analyst-**"]
+  workflow_dispatch:
+
+concurrency:
+  group: analyst
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+  actions: write
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Merge (closer, allowlist, witness, chain)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python -I analyst/jobs/merge_job.py

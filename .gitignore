@@ -1,0 +1,6 @@
+.analyst_run/
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+site/analyst/index.html
