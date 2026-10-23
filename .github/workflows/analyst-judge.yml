@@ -1,0 +1,120 @@
+# The analyst judge (ANALYST_V1_PREREG.md §8 as amended by v0.5 M7; IMPLEMENTATION_REGISTER R-AN-66..R-AN-70).
+# Script only: no model, never the Anthropic key, never the Cloudflare token.
+# Triggers: after analyst-settle (workflow_run runs main's workflow file, never an agent branch's), a daily backstop,
+# and manual dispatch. No push and no pull_request trigger, so nothing a session pushes to claude/* can run here.
+# Permissions: the `judge` job reads (contents, actions, issues); only the short `publish` job may write contents,
+# and its step refuses any commit that touches a path outside reports/judge_analyst/.
+# Pushed agent commits are fetched as data only (git fetch <sha>, then git diff); nothing from them is executed.
+name: analyst-judge
+
+on:
+  workflow_run:
+    workflows: [analyst-settle]
+    types: [completed]
+  schedule:
+    - cron: "40 23 * * *"   # after analyst-settle's 23:15 backstop
+  workflow_dispatch:
+
+concurrency:
+  group: analyst-judge
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  judge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
+      issues: read
+    outputs:
+      finished: ${{ steps.judge.outputs.finished }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: true
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.26"
+
+      # A0-A11, the verdict and its outputs. `finished` is set only when the judge returned normally.
+      # The judge reads gold-forward-watch only when a checkout of it is provided (--store); without it the run is
+      # WARNING (A0 source_store_unavailable), never SOUND. See judge_analyst/README.md, open point 1.
+      - name: Judge run
+        id: judge
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          uv run --frozen --no-dev python -I judge_analyst/run_judge.py --out reports/judge_analyst --fetch-pushes
+          echo "finished=1" >> "$GITHUB_OUTPUT"
+
+      - name: Check that the judge wrote only its folder
+        if: ${{ steps.judge.outputs.finished == '1' }}
+        run: |
+          if ! git diff --quiet HEAD -- . ':(exclude)reports/judge_analyst'; then
+            echo "the judge changed tracked files outside reports/judge_analyst; nothing is published"; exit 1
+          fi
+          if [ -n "$(git ls-files --others --exclude-standard -- . ':(exclude)reports/judge_analyst')" ]; then
+            echo "the judge created files outside reports/judge_analyst; nothing is published"; exit 1
+          fi
+
+      - name: Upload the judge records
+        if: ${{ steps.judge.outputs.finished == '1' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: judge-analyst-records
+          path: reports/judge_analyst
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Fail the job if the judge did not finish
+        if: ${{ steps.judge.outcome == 'failure' }}
+        run: exit 1
+
+  publish:
+    needs: judge
+    if: ${{ needs.judge.result == 'success' && needs.judge.outputs.finished == '1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - name: Restore the judge records
+        uses: actions/download-artifact@v4
+        with:
+          name: judge-analyst-records
+          path: reports/judge_analyst
+
+      - name: Commit the judge records (reports/judge_analyst/** only)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          allowed='^reports/judge_analyst/'
+          git add -- reports/judge_analyst
+          outside=$(git diff --cached --name-only | grep -v -E "$allowed" || true)
+          if [ -n "$outside" ]; then echo "staged outside the judge folder: $outside"; git reset -q; exit 1; fi
+          if git diff --cached --quiet; then echo "nothing to commit"; exit 0; fi
+          git commit -q -m "analyst-judge run $(date -u +%Y-%m-%dT%H:%MZ)"
+          for i in 1 2 3 4 5; do
+            if git pull -q --rebase; then
+              touched=$(git diff-tree --no-commit-id --name-only -r HEAD | grep -v -E "$allowed" || true)
+              if [ -n "$touched" ]; then echo "the judge commit touches other paths: $touched"; exit 1; fi
+              git push -q && exit 0
+            else
+              git rebase --abort 2>/dev/null || true
+            fi
+            echo "push attempt $i failed"; sleep 20
+          done
+          exit 1
