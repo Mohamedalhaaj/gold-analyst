@@ -1,29 +1,36 @@
 {
  "schema": "analyst-routine-config/1",
- "note": "TEMPLATE for the owner (not an export). After creating the routines, the owner exports the real configuration with RemoteTrigger get into analyst/ROUTINE_CONFIG.json (register R-AN-61), minus anything secret. Prompts are the one-line texts below; each points to a section of the frozen analyst/ROUTINE_PROMPT.md.",
+ "note": "TEMPLATE for the owner (not an export). The routines attach to the agent inbox only (register R-AN-61, R-AN-75 item 1, §16.18 A6): sessions clone Mohamedalhaaj/gold-analyst-inbox and push their attempt, call, lesson and playbook files to its claude/analyst-* branches; analyst-merge in gold-analyst reads them from the inbox's activity. After repointing the routines, the owner exports the real configuration with RemoteTrigger get into analyst/ROUTINE_CONFIG.json, minus anything secret, in its own commit. Prompts are the one-line texts below; each points to a section of the frozen analyst/ROUTINE_PROMPT.md.",
  "exported_utc": null,
  "environment": {
   "name": "gold-analyst",
-  "network": {"mode": "custom allowlist", "allow": ["the git proxy (default)", "datafeed.dukascopy.com"]},
+  "network": {"mode": "custom", "allow": ["datafeed.dukascopy.com"], "package_managers": "off",
+              "note": "The GitHub proxy is reachable at every network level and serves only the attached inbox. The session steps import only the standard library and analyst/vendor (tests/test_layout.py), so no package install is needed. Disclosed: through the inbox's webhooks GitHub itself can still reach any address for a session (R-AN-75 item 2); no network setting closes that."},
   "secrets": "none",
-  "setup": "none (dependencies are vendored; python3 >= 3.10 from the image)"
+  "setup": "none (dependencies are vendored; python3 >= 3.10, git and gh from the image)"
  },
+ "github_app": "The Claude GitHub App installation that routine sessions use has repository access 'Only select repositories' holding gold-analyst-inbox, and never gold-analyst, gold-forward-watch or xauusd-quant (R-AN-75 item 1); no /web-setup copy of the owner's gh token is stored.",
  "routines": [
-  {"name": "analyst-w1", "trigger_id": null, "repo": "Mohamedalhaaj/gold-analyst", "enabled": true,
+  {"name": "analyst-w1", "trigger_id": null, "repo": "Mohamedalhaaj/gold-analyst-inbox", "enabled": true,
    "crons": ["20 6,7 * * 1-5"], "model": "claude-opus-5-5", "effort": null,
    "allowed_tools": ["Bash", "Read", "Write"], "branch_pushes": "default (claude/* only); unrestricted off",
    "prompt": "Follow the section CALL of analyst/ROUTINE_PROMPT.md exactly.", "prompt_sha256": null},
-  {"name": "analyst-w2", "trigger_id": null, "repo": "Mohamedalhaaj/gold-analyst", "enabled": true,
+  {"name": "analyst-w2", "trigger_id": null, "repo": "Mohamedalhaaj/gold-analyst-inbox", "enabled": true,
    "crons": ["50 12,13 * * 1-5"], "model": "claude-opus-5-5", "effort": null,
    "allowed_tools": ["Bash", "Read", "Write"], "branch_pushes": "default (claude/* only); unrestricted off",
    "prompt": "Follow the section CALL of analyst/ROUTINE_PROMPT.md exactly.", "prompt_sha256": null},
-  {"name": "analyst-lesson", "trigger_id": null, "repo": "Mohamedalhaaj/gold-analyst", "enabled": true,
+  {"name": "analyst-lesson", "trigger_id": null, "repo": "Mohamedalhaaj/gold-analyst-inbox", "enabled": true,
    "crons": ["40 16 * * 2-6"], "model": "claude-opus-5-5", "effort": null,
    "allowed_tools": ["Bash", "Read", "Write"], "branch_pushes": "default (claude/* only); unrestricted off",
    "prompt": "Follow the section LESSON of analyst/ROUTINE_PROMPT.md exactly.", "prompt_sha256": null},
-  {"name": "analyst-revision", "trigger_id": null, "repo": "Mohamedalhaaj/gold-analyst", "enabled": true,
+  {"name": "analyst-revision", "trigger_id": null, "repo": "Mohamedalhaaj/gold-analyst-inbox", "enabled": true,
    "crons": ["0 18,22 * * 6"], "model": "claude-opus-5-5", "effort": null,
    "allowed_tools": ["Bash", "Read", "Write"], "branch_pushes": "default (claude/* only); unrestricted off",
    "prompt": "Follow the section REVISION of analyst/ROUTINE_PROMPT.md exactly.", "prompt_sha256": null}
- ]
+ ],
+ "probe_session": {
+  "note": "The one-off probe session that must give probe_pass before canary_from is set (register §16.18 A6, Canary; R-AN-84; C5-C7). Not a routine: run once by hand in environment gold-analyst, attached to the inbox only, with the routines' network and tools; it may be rerun at any time. The owner copies the pushed probes/<tag>.json byte for byte to gold-analyst analyst/canary/checks/PROBE_<tag>.json.",
+  "repo": "Mohamedalhaaj/gold-analyst-inbox", "model": "claude-opus-5-5", "allowed_tools": ["Bash", "Read", "Write"],
+  "prompt": "From the repository root run exactly `python3 analyst/run_window.py probe` once, report its one output line and exit code, and stop. Do not run anything else."
+ }
 }
