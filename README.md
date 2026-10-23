@@ -27,3 +27,7 @@ shown that the analyst has an edge; the expected result is "not promoted".
 - `tests/`: `uv run --group dev pytest`.
 
 No secret is stored in this repository; workflows reference them by name only.
+
+The analyst judge is not here (prereg R1(a), register R-AN-1): it lives in gold-forward-watch (`judge_analyst/`),
+reads this public repository as data only, and publishes its verdict at
+`<PINS.judge_site_url>/judge_analyst/analyst_verdict.json`, which `analyst-settle` reads (R-AN-70).

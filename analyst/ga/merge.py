@@ -11,6 +11,11 @@ so that a comment without its file can be completed exactly (record = the script
 agent file); `seq` is global across modes; a well-formed push for a window outside the mode's period is rejected with
 `mode`; a lesson without an earlier accepted lesson attempt is rejected `lesson_cap`; a playbook without an accepted
 revision attempt for its version is rejected `version`.
+
+No push can halt the merge or the closer (register §16 note of 2026-10-23, review blocker B2): an orphan or unfetchable
+commit, a path whose call_id names no window (an impossible date or a weekend) and a non-regular file are
+`agent_scope`; an unexpected failure while an allowed file's content is checked, before anything was written or
+posted, is `invalid_content`; a comment whose agent file cannot be reproduced gets a second witness `invalid_content`.
 """
 import datetime as dt
 import re
@@ -50,6 +55,22 @@ def classify_path(path):
             if m:
                 return kind, mode, m
     return None, None, None
+
+
+def names_a_window(ident):
+    """False when the path's call_id (in an attempt's draw, or in a call or lesson path) names no window: an
+    impossible date or a weekend (R-AN-4: windows exist on weekdays only). Such a path is outside the allowlist
+    (register §16 note of 2026-10-23, review blocker B2). Revision paths carry no call_id."""
+    draw = ident.get("draw") or ""
+    cid = ident.get("cid") or (draw[len("lesson-"):] if draw.startswith("lesson-") else
+                               (None if draw.startswith("revision-") else draw or None))
+    if cid is None:
+        return True
+    try:
+        d, _w = clock.parse_call_id(cid)
+    except ValueError:
+        return False
+    return clock.is_weekday(d)
 
 
 def expected_windows(mode_doc, mode, until):
@@ -145,6 +166,7 @@ class Merge:
         self.tracks = []
         self.subjects = []
         self._run_created = None
+        self._acting = False                 # set once a push's processing has written or posted anything
 
     # ------------------------------------------------------------ comments, seq
     def bot_comments(self):
@@ -192,33 +214,51 @@ class Merge:
 
     # ------------------------------------------------------------ completion of comments without files
     def complete_from_comments(self):
+        """Write the files of every bot witness comment that has no witness file yet (a run that failed after posting).
+        A write that cannot be reproduced (the agent's commit can no longer be fetched, or its bytes differ) does not
+        stop the run: the witness file is still written from its comment, and the push gets a second, rejected
+        witness `invalid_content` naming the missing path (register §16 note of 2026-10-23, review blocker B2)."""
         have = set()
         for mode in ("live", "canary"):
             have |= {w.get("seq") for w in witness.witnesses(self.view, mode)}
-        for c in self.bot_comments():
+        unrecovered = []
+        for c in list(self.bot_comments()):
             if c["seq"] in have:
                 continue
             doc = dict(c["payload"])
             doc["comment"] = {"issue": self.issue, "id": c["id"], "created_utc": c["created_utc"],
                               "body_sha256": rec.sha256_bytes(c["body"].encode("utf-8"))}
+            missing = []
             for wr in doc.get("writes") or []:
                 if self.view.exists(wr["path"]):
                     continue
-                if wr.get("record") is not None:
-                    data = rec.record_bytes(wr["record"])
-                else:
-                    after = (doc.get("push") or {}).get("after")
-                    self.ws.fetch_commit(after, (doc.get("push") or {}).get("ref"))
-                    data = self.ws.show(after, wr["path"])
+                try:
+                    data = self._completion_bytes(doc, wr)
+                except Exception:  # noqa: BLE001 - an unfetchable or malformed source is logged below
+                    data = None
                 if data is None or rec.sha256_bytes(data) != wr["sha256"]:
-                    raise RuntimeError(f"cannot complete witness seq {c['seq']}")
+                    missing.append(wr["path"])
+                    continue
                 self.ws.write(wr["path"], data)
-            self.ws.write(paths.witness_path(doc.get("mode") or "live", c["seq"]), rec.record_bytes(doc))
+            mode = doc.get("mode") or "live"
+            self.ws.write(paths.witness_path(mode, c["seq"]), rec.record_bytes(doc))
             self.subjects.append(f"complete seq {c['seq']}")
+            if missing:
+                unrecovered.append((mode, doc, missing[0]))
+        for mode, doc, path in unrecovered:
+            self.reject(mode, doc.get("kind") or "push", doc.get("id"), "invalid_content", path, doc.get("push"))
+
+    def _completion_bytes(self, doc, wr):
+        if wr.get("record") is not None:
+            return rec.record_bytes(wr["record"])
+        after = (doc.get("push") or {}).get("after")
+        self.ws.fetch_commit(after, (doc.get("push") or {}).get("ref"))
+        return self.ws.show(after, wr["path"])
 
     # ------------------------------------------------------------ witness posting
     def post_witness(self, doc, mode):
         """Post the comment, then write the witness file and its writes. Returns the witness doc (with comment)."""
+        self._acting = True
         doc = dict(doc)
         doc.setdefault("writes", [])
         doc["schema"] = WITNESS_SCHEMA
@@ -415,19 +455,30 @@ class Merge:
         return doc
 
     def process_push(self, ref, before, after):
+        """Witness one push. Whatever the push contains, this returns a witness and never raises because of it
+        (review blocker B2): a push whose diff cannot be computed (an orphan or unfetchable commit), a path outside
+        the allowlist (a call_id naming no window included) or a path that is not a regular file is `agent_scope`;
+        an unexpected failure while an allowed file's content is checked, before anything was written or posted, is
+        `invalid_content`. Failures after a witness comment was posted (the API, the workspace) still raise: the
+        next run completes that comment."""
         if after == ZERO40 or self.witnessed_after(after):
             return None
-        self.ws.fetch_commit(after, ref)
-        entries = self.ws.diff_entries(after)
+        try:
+            self.ws.fetch_commit(after, ref)
+            entries = self.ws.diff_entries(after)
+        except Exception:  # noqa: BLE001 - checked below: no diff means not exactly one allowed added file
+            entries = None
         pinfo, t_utc, t_src = self.push_time(ref, after)
         push = {"ref": ref, "before": before, "after": after, **pinfo}
         wmode = self.mode if self.mode in ("live", "canary") else "live"
+        if entries is None:
+            return self.reject(wmode, "push", None, "agent_scope", None, push)
         if len(entries) != 1 or entries[0][0] != "A" or entries[0][1].startswith(".github/"):
             p = entries[0][1] if len(entries) == 1 else None
             return self.reject(wmode, "push", None, "agent_scope", p, push)
         path = entries[0][1]
         kind, pmode, m = classify_path(path)
-        if kind is None:
+        if kind is None or not names_a_window(m.groupdict()):
             return self.reject(wmode, "push", None, "agent_scope", path, push)
         ident = m.groupdict()
         id_ = ident.get("draw") or ident.get("cid") or (f"v{ident['k']}" if ident.get("k") else None)
@@ -435,6 +486,8 @@ class Merge:
             return self.reject(wmode, kind, id_, "mode", path, push)
         mode = pmode
         data = self.ws.show(after, path)
+        if data is None:                          # not a regular file (a submodule entry): not an allowed file
+            return self.reject(wmode, "push", None, "agent_scope", path, push)
         sha = rec.sha256_bytes(data)
         on_main = self.view.read(path)
         if on_main is not None:
@@ -443,9 +496,16 @@ class Merge:
             return self.reject(mode, kind, id_, "rewrite", path, push)
         handler = {"attempt": self._attempt, "call": self._call, "lesson": self._lesson,
                    "revision": self._revision}[kind]
-        return handler(mode, path, ident, id_, data, sha, push, t_utc, t_src)
+        self._acting = False
+        try:
+            return handler(mode, path, ident, id_, data, sha, push, t_utc, t_src)
+        except Exception:  # noqa: BLE001
+            if self._acting:                      # a witness or a file is already out: never contradict it
+                raise
+            return self.reject(mode, kind, id_, "invalid_content", path, push)
 
     def _accept(self, mode, kind, id_, path, data, sha, push, window):
+        self._acting = True
         doc = {"seq": self.next_seq(), "kind": kind, "id": id_, "status": "accepted", "reason": None, "path": path,
                "file_sha256": sha, "push": push, "window": window, "terminal": None,
                "writes": [{"path": path, "sha256": sha, "record": None}]}
@@ -526,7 +586,7 @@ class Merge:
             status, detail = "no_call:invalid", "no_attempt"
         elif att[0]["void"]:
             status, detail = "no_call:invalid", "void_attempt"
-        elif not plan.derivable(doc):
+        elif not _derivable(doc):
             status, detail = "no_call:invalid", "underivable"
         else:
             status, detail = doc["status"], doc.get("detail")
@@ -583,6 +643,15 @@ class Merge:
                 "writer": "merge"}
         self.ws.write(paths.revision_record_path(mode, iw), rec.record_bytes(rdoc))
         return out
+
+
+def _derivable(doc):
+    """plan.derivable, where a check that raises on the agent's content means "not derivable" (R-AN-36 step 4): the
+    call witness is already out at this point, so the failure must end in the terminal record, not in an exception."""
+    try:
+        return bool(plan.derivable(doc))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 ALLOWED_WRITE_PREFIXES = ("analyst/attempts/", "analyst/calls/", "analyst/lessons/", "analyst/playbooks/",

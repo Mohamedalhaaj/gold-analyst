@@ -33,6 +33,17 @@ def test_no_agent_instruction_files():
     assert bad == []
 
 
+def test_no_judge_and_no_reports_here():
+    """R1(a) and R-AN-1: gold-analyst holds no reports, lab, L1 or judge outputs; the analyst judge (`judge_analyst/`,
+    its manifest, workflow and outputs) lives in gold-forward-watch (review blockers B1, B3)."""
+    import subprocess
+    tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files"], capture_output=True, text=True).stdout.split()
+    bad = [p for p in tracked if p.startswith(("judge_analyst/", "reports/", "judge/"))
+           or p == ".github/workflows/analyst-judge.yml" or "FROZEN_JUDGE" in p]
+    assert bad == []
+    assert not (ROOT / "judge_analyst").exists() and not (ROOT / "reports").exists()
+
+
 def test_vendored_eproc_is_the_labs():
     assert sha("analyst/vendor/eproc.py") == EPROC_SHA
 
