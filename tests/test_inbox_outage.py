@@ -5,6 +5,9 @@ R-AN-39, R-AN-40).
   fails too) is a GitHub outage, not an agent fault: the run stops with nothing posted for that push, logs
   `inbox_fetch=unreachable` and exits 1; the next run retries. Only a commit that cannot be fetched while the inbox
   answers is `agent_scope`. The same holds when a comment without its file is completed: no second witness.
+- (GA-B1-R) The tries come in two rounds, each followed by that check of inbox main: a commit is `agent_scope` only
+  when both rounds failed and the inbox answered after each. An incident that ends (or flaps) between the last failed
+  fetch and the check therefore costs nothing; one that returns during the second round stops the run as above.
 - analyst-settle stops, with a logged enum, at a `called` terminal whose call file is not on main.
 - The closer closes only windows the run's push range covers: span start (entry − 45 min) at or after
   max(PINS.inbox_from_utc, now − 28 days). An uncovered open window stays open (`stale_window <call_id>`) and so do
@@ -43,6 +46,28 @@ class InboxOutage:
         self.cmds.append(list(argv))
         if self.down and self.inbox in argv:
             return subprocess.CompletedProcess(argv, 128, b"", b"fatal: unable to access: 503")
+        return subprocess.run(argv, **kw)
+
+
+class Incident:
+    """subprocess.run for the merge workspace while `armed`: the git fetches that name the inbox get the scripted
+    answers in order ('fail' as during a GitHub git incident, 'hang' for a fetch that times out, 'ok'), and work once
+    the script is used up: an incident that ends, or flaps, during the run. `seen` records what each asked for."""
+
+    def __init__(self, inbox, script):
+        self.inbox = str(inbox)
+        self.script = list(script)
+        self.armed = False
+        self.seen = []
+
+    def __call__(self, argv, **kw):
+        if self.armed and "fetch" in argv and self.inbox in argv:
+            self.seen.append("main" if argv[-1] == "refs/heads/main" else "commit")
+            answer = self.script.pop(0) if self.script else "ok"
+            if answer == "fail":
+                return subprocess.CompletedProcess(argv, 128, b"", b"fatal: unable to access: 503")
+            if answer == "hang":
+                raise subprocess.TimeoutExpired(argv, kw.get("timeout"))
         return subprocess.run(argv, **kw)
 
 
@@ -154,6 +179,68 @@ def test_a_commit_lost_while_the_inbox_answers_is_still_agent_scope(tmp_path):
     h.push_and_merge()
     w = h.last_witness()
     assert (w["kind"], w["status"], w["reason"], w["path"]) == ("push", "rejected", "agent_scope", None)
+
+
+# ---------------------------------------------------------------- GA-B1-R: an incident that ends during the tries
+@pytest.mark.parametrize("script,seen", [
+    (["fail"] * 6, ["commit"] * 6 + ["main", "commit"]),       # 3 tries x (sha, ref) fail; the inbox then answers
+    (["hang"], ["commit", "main", "commit"]),                  # a fetch hangs to its timeout; the inbox then answers
+])
+def test_an_incident_that_ends_before_the_inbox_check_keeps_the_call(tmp_path, script, seen):
+    """The commit is tried for one more round after the inbox answered: a timely call is not `agent_scope` because
+    the incident ended between its last failed fetch and the fetch of inbox main (register R-AN-32, GA-B1-R)."""
+    h = Harness(tmp_path)
+    h.runner = Incident(h.world.inbox, script)
+    call_flow(h)
+    h.at(2026, 11, 10, 7, 50)
+    h.runner.armed = True
+    h.merge()                                                   # no InboxUnavailable: the second round fetched it
+    h.runner.armed = False
+    assert h.runner.seen == seen
+    h.at(2026, 11, 10, 8, 10)
+    h.merge()
+    t = h.main_json(W1_TERM)
+    assert (t["status"], t["writer"], t["call"]["lock_utc"]) == ("called", "merge", "2026-11-10T07:44:30Z")
+    assert [(w["kind"], w["status"], w["reason"]) for w in h.witnesses()] == [
+        ("attempt", "accepted", None), ("call", "accepted", None), ("terminal", "accepted", None)]
+
+
+def test_an_incident_that_returns_during_the_second_round_stops_the_run(tmp_path):
+    """The inbox is checked again after the second round: if it does not answer then, the run stops as in an outage,
+    and the next run keeps the call (GA-B1-R)."""
+    h = Harness(tmp_path)
+    h.runner = Incident(h.world.inbox, ["fail"] * 6 + ["ok"] + ["fail"] * 6 + ["fail"] * 3)
+    call_flow(h)
+    comments, before = len(h.api.issue_comments), h.world.main_sha()
+    h.at(2026, 11, 10, 7, 50)
+    h.runner.armed = True
+    with pytest.raises(merge.InboxUnavailable):
+        h.merge()
+    h.runner.armed = False
+    assert h.runner.seen == ["commit"] * 6 + ["main"] + ["commit"] * 6 + ["main"] * 3
+    assert len(h.api.issue_comments) == comments and h.world.main_sha() == before
+    assert "inbox_fetch=unreachable" in h.merge_log
+    h.at(2026, 11, 10, 8, 10)
+    h.merge()
+    t = h.main_json(W1_TERM)
+    assert (t["status"], t["call"]["lock_utc"]) == ("called", "2026-11-10T07:44:30Z")
+
+
+def test_a_completion_during_a_flapping_incident_needs_no_second_witness(tmp_path):
+    h = Harness(tmp_path)
+    h.runner = Incident(h.world.inbox, ["fail"] * 6)
+    assert h.run("start") == 0
+    h.register_pushes()
+    h.merge_fail = True
+    with pytest.raises(RuntimeError):
+        h.merge()                                               # the witness comment is out; the push to main failed
+    h.merge_fail = False
+    h.at(2026, 11, 10, 7, 30)
+    h.runner.armed = True
+    h.merge()
+    assert h.runner.seen == ["commit"] * 6 + ["main", "commit"]
+    assert [(w["status"], w["reason"]) for w in h.witnesses()] == [("accepted", None)]
+    assert h.main_json(CANARY_ATT) is not None and len(h.api.issue_comments) == 1
 
 
 def test_the_reachability_check_is_a_fetch_of_inbox_main_without_credentials(tmp_path):

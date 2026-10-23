@@ -4,9 +4,10 @@ R-AN-40, R-AN-75 item 4).
 - The inbox's activity is read in full or not at all: every page, the token first and then once without it, bounded
   tries. A failed read stops the run before anything is written, posted, committed or dispatched (review blocker B1).
 - A push's time is its earliest inbox activity entry on a `claude/analyst-*` ref with timestamp >= inbox_from_utc.
-- A pushed commit is fetched from the inbox as data, without gold-analyst's credential, within 180 s and 3 tries; a
-  blob over 4 MiB is never read. Either bound gives `agent_scope`, never a halted run, while the inbox answers (a
-  fetch of its main works); an inbox that does not answer stops the run (tests/test_inbox_outage.py, GA-B1).
+- A pushed commit is fetched from the inbox as data, without gold-analyst's credential, within 180 s per fetch and two
+  rounds of 3 tries; a blob over 4 MiB is never read. Either bound gives `agent_scope`, never a halted run, while the
+  inbox answers (a fetch of its main works after each round); an inbox that does not answer stops the run
+  (tests/test_inbox_outage.py, GA-B1, GA-B1-R).
 - Pushes older than 28 days are not processed (SEC-3).
 - An edited witness comment counts for nothing except seq.
 - The closer witnesses every listed push before it closes a window.
@@ -287,9 +288,10 @@ def commit_fetches(cmds):
     return [c for c in cmds if c[-1] != "refs/heads/main"]
 
 
-def test_a_fetch_timeout_is_agent_scope_without_more_tries(tmp_path):
-    """While the inbox answers (its main can be fetched), a timed-out fetch of the pushed commit is the push's fault
-    (GA-B1: only an inbox that does not answer stops the run)."""
+def test_a_fetch_timeout_ends_a_round_and_two_are_agent_scope(tmp_path):
+    """A timed-out fetch ends its round. While the inbox answers (its main can be fetched after each round), a commit
+    whose fetch times out in both rounds is the push's fault (GA-B1, GA-B1-R: only an inbox that does not answer
+    stops the run)."""
     def timeout(argv, kw):
         if argv[-1] == "refs/heads/main":
             return subprocess.run(argv, **kw)
@@ -301,11 +303,11 @@ def test_a_fetch_timeout_is_agent_scope_without_more_tries(tmp_path):
     w = h.last_witness()
     assert (w["kind"], w["id"], w["status"], w["reason"], w["path"]) == ("push", None, "rejected", "agent_scope",
                                                                         None)
-    assert len(commit_fetches(h.runner.fetches())) == 1 and h.world.main_file(CANARY_ATT) is None
-    assert [c[-1] for c in h.runner.fetches()].count("refs/heads/main") == 1      # the inbox answered
+    assert len(commit_fetches(h.runner.fetches())) == 2 and h.world.main_file(CANARY_ATT) is None
+    assert [c[-1] == "refs/heads/main" for c in h.runner.fetches()] == [False, True, False, True]   # it answered
 
 
-def test_a_failing_fetch_is_tried_3_times_20_s_apart(tmp_path):
+def test_a_failing_fetch_is_tried_in_two_rounds_of_3_tries_20_s_apart(tmp_path):
     def fail(argv, kw):
         if argv[-1] == "refs/heads/main":                       # the inbox answers
             return subprocess.run(argv, **kw)
@@ -317,13 +319,13 @@ def test_a_failing_fetch_is_tried_3_times_20_s_apart(tmp_path):
     h.register_pushes()
     ws = merge.Workspace(h.world.clone("m"), runner=rec_, inbox_url=str(h.world.inbox), sleep=sleeps.append)
     merge.run_merge(ws, h.api, h.now, {"workflow": "analyst-merge", "id": 1, "attempt": 1, "event": "schedule"})
-    assert sleeps == [20, 20]
-    assert len(commit_fetches(rec_.fetches())) == 6              # 3 tries of (the sha, then the push's ref)
+    assert sleeps == [20, 20, 20, 20]                           # inside each round; none before the second
+    assert len(commit_fetches(rec_.fetches())) == 12             # 2 rounds of 3 tries of (the sha, then the ref)
     assert all(c[c.index("fetch") + 4] in (h.api.acts[0]["after"], f"+{h.api.acts[0]['ref']}:refs/analyst-fetch/"
                                                                    f"{h.api.acts[0]['after']}")
                for c in commit_fetches(rec_.fetches()))
-    assert len(rec_.fetches()) == 7                              # then one fetch of inbox main, which answers
-    assert h.last_witness()["reason"] == "agent_scope"
+    assert [c[-1] == "refs/heads/main" for c in rec_.fetches()] == ([False] * 6 + [True]) * 2   # inbox main after
+    assert h.last_witness()["reason"] == "agent_scope"                                        # each round answers
 
 
 def test_every_fetch_command_has_the_180_s_timeout(tmp_path):

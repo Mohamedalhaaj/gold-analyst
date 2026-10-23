@@ -23,7 +23,10 @@ second witness `invalid_content`. Only a failed activity read stops a run, befor
 After the second review of §16.18 A6 (GA-B1, SEC-3), a GitHub outage can delay a record but not change it:
 - a pushed commit that cannot be fetched while the inbox does not answer either (a fetch of inbox main fails) is an
   outage, not the push's fault: InboxUnavailable stops the run before anything is posted for that push or comment, and
-  the next run retries. Only while the inbox answers is an unfetchable commit `agent_scope`;
+  the next run retries. Only while the inbox answers is an unfetchable commit `agent_scope`. The tries come in
+  FETCH_ROUNDS rounds, each followed by that check (GA-B1-R): an incident that ends, or flaps, between the last failed
+  fetch and the check gets a second round, and the commit is `agent_scope` only when both rounds failed and the inbox
+  answered after each;
 - the closer closes only the windows its push range covers: span start >= range_start = max(inbox_from_utc,
   now - WINDOW_DAYS). The first uncovered open window of a mode stays open (`stale_window`), and with it the mode's
   later windows (their chain runs through it); a push for an uncovered open window is not processed; a Saturday before
@@ -56,6 +59,7 @@ WINDOW_DAYS = 28                     # the push range: pushes older than this ar
 FETCH_TIMEOUT_S = 180                # per git fetch of a pushed commit (R-AN-32, fetch bound)
 FETCH_TRIES = 3
 FETCH_RETRY_S = 20
+FETCH_ROUNDS = 2                     # rounds of FETCH_TRIES, each followed by the inbox check (GA-B1-R)
 REACH_TIMEOUT_S = 30                 # the fetch of inbox main that tells an outage from an unfetchable commit (GA-B1)
 REACH_TRIES = 3
 MAX_BLOB = 4 * 1024 * 1024           # an allowed blob above this is agent_scope and never read
@@ -156,33 +160,38 @@ class Workspace:
 
     def fetch_commit(self, sha, ref=None):
         """Fetch a pushed commit from the inbox, as data and without credentials (R-AN-32): by its sha, else the
-        push's ref into refs/analyst-fetch/<sha>. Each git fetch has FETCH_TIMEOUT_S; a failed try is repeated up to
-        FETCH_TRIES times, FETCH_RETRY_S apart, and a timeout ends the tries. Then the inbox itself is asked
-        (inbox_reachable): if it does not answer, this is an outage and InboxUnavailable is raised (GA-B1); if it
-        answers, the commit cannot be fetched (RuntimeError: the push's `agent_scope`)."""
+        push's ref into refs/analyst-fetch/<sha>, in up to FETCH_ROUNDS rounds (fetch_round). After a failed round
+        the inbox itself is asked (inbox_reachable): if it does not answer, this is an outage and InboxUnavailable is
+        raised (GA-B1); if it answers, the next round starts at once. Only when every round failed and the inbox
+        answered after each is the commit unfetchable (RuntimeError: the push's `agent_scope`). So an incident that
+        ends, or flaps, between a round's last fetch and the check is not the push's fault (GA-B1-R)."""
         if not SHA_RE.fullmatch(sha or "") or not self.inbox_url:
             raise RuntimeError("the pushed commit cannot be fetched")
         if self.has_commit(sha):
             return
         specs = [[sha]] + ([[f"+{ref}:refs/analyst-fetch/{sha}"]] if ref else [])
-        timed_out = False
+        for _ in range(FETCH_ROUNDS):
+            if self.fetch_round(sha, specs):
+                return
+            if not self.inbox_reachable():
+                raise InboxUnavailable("the inbox does not answer")
+        raise RuntimeError("the pushed commit cannot be fetched")
+
+    def fetch_round(self, sha, specs):
+        """One round: each spec in turn, FETCH_TIMEOUT_S per git fetch; a failed try is repeated up to FETCH_TRIES
+        times, FETCH_RETRY_S apart, and a timeout ends the round. True once the commit is in the checkout."""
         for i in range(FETCH_TRIES):
             for spec in specs:
                 try:
                     self.git("fetch", "--quiet", "--no-tags", self.inbox_url, *spec, check=False,
                              timeout=FETCH_TIMEOUT_S, pre=NO_AUTH)
                 except subprocess.TimeoutExpired:
-                    timed_out = True
-                    break
+                    return False
                 if self.has_commit(sha):
-                    return
-            if timed_out:
-                break
+                    return True
             if i < FETCH_TRIES - 1:
                 self.sleep(FETCH_RETRY_S)
-        if not self.inbox_reachable():
-            raise InboxUnavailable("the inbox does not answer")
-        raise RuntimeError("the pushed commit cannot be fetched")
+        return False
 
     def inbox_reachable(self):
         """True when the inbox answers git: `git fetch <inbox> refs/heads/main` without credentials and over protocol
