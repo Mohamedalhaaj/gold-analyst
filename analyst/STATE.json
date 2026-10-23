@@ -1,0 +1,25 @@
+{
+ "E": 1.0,
+ "E_star": 400.0,
+ "K": null,
+ "asof_utc": "2026-10-23T08:38:32Z",
+ "calls_enabled": true,
+ "first_day": null,
+ "head_sha": "2825ee16d088b09c951721328638a9125117bd9c",
+ "judge_verdict": {
+  "asof_utc": null,
+  "fetched": false,
+  "value": null
+ },
+ "last_event_seq": 0,
+ "last_processed_day": null,
+ "missed_share_40": 0.0,
+ "n": 0,
+ "pause_reasons": [],
+ "paused_display": false,
+ "run_id": 39926066517,
+ "schema": "analyst-state/1",
+ "side_label": false,
+ "side_share": null,
+ "state": "SHAKEDOWN"
+}

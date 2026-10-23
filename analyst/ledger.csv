@@ -1,0 +1,1 @@
+call_id,model_day,window,class,terminal_status,status,detail,action,side,stop_mult,target_mult,confidence,D_ref,S,T,lock_utc,attempts,entry_utc,exit_utc,P_e,X,Tg,exit_minute_utc,P_x,reason,fill,gross_usd,cost_usd,net_usd,stress_net_usd,R,R_stress,y,trade_no,E,K,d_W,twin_status,opp_net_usd,opp_R,settled_utc,terminal_sha256,call_sha256,settled_sha256
