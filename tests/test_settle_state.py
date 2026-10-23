@@ -28,7 +28,7 @@ def test_settle_end_to_end_live(tmp_path):
     h.at(2026, 11, 11, 9, 0)
     mirror = store_files(clock.days_range(dt.date(2026, 9, 1), dt.date(2026, 11, 10)))
     h.world.owner_commit(mirror, "analyst mirror")
-    ws = merge.Workspace(h.world.clone("settle"))
+    ws = h.workspace("settle")
     st, done = settle_run.run_settle(ws, h.api, h.now, {"workflow": "analyst-settle", "id": 9, "attempt": 1,
                                                         "event": "push"}, verdict=None)
     s = h.main_json("analyst/settled/2026-11-10_W1.json")
@@ -55,7 +55,7 @@ def test_settle_end_to_end_live(tmp_path):
     assert led[0]["class"] == "shakedown" and led[0]["trade_no"] == "" and led[0]["R"] != ""
     assert list(led[0]) == state.LEDGER_COLS
     # a second run is a no-op for settled records (create-only) and keeps the state
-    ws = merge.Workspace(h.world.clone("settle2"))
+    ws = h.workspace("settle2")
     settle_run.run_settle(ws, h.api, h.now, {"workflow": "analyst-settle", "id": 10, "attempt": 1, "event": "x"})
     assert h.main_json("analyst/settled/2026-11-10_W1.json") == s
 
@@ -63,7 +63,7 @@ def test_settle_end_to_end_live(tmp_path):
 def test_settle_waits_for_the_store(tmp_path):
     h = Harness(tmp_path, mode="live", canary_from=None, live_from="2026-11-10")
     h.at(2026, 11, 10, 18, 0)
-    ws = merge.Workspace(h.world.clone("settle"))
+    ws = h.workspace("settle")
     st, done = settle_run.run_settle(ws, h.api, h.now, {"workflow": "s", "id": 1, "attempt": 1, "event": "x"})
     assert h.world.main_list("analyst/settled/") == [] and h.world.main_list("analyst/twins/") == []
     assert len(h.world.main_list("analyst/terminal/")) == 2                     # the closer still closed both

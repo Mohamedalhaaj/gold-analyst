@@ -1,14 +1,14 @@
-# analyst-deploy (prereg §7; register R-AN-75): builds the /analyst/ page from main's records and deploys the
-# separate Worker `gold-analyst` with wrangler. Only this workflow uses the environment `analyst-pages`, whose
+# analyst-deploy (prereg §7; register R-AN-75, §16.18 A6): builds the /analyst/ page from main's records and deploys
+# the separate Worker `gold-analyst` with wrangler. Only this workflow uses the environment `analyst-pages`, whose
 # deployment branches are main only; CLOUDFLARE_API_TOKEN is an environment secret referenced by name, and the
-# account id is the environment variable CLOUDFLARE_ACCOUNT_ID. It never runs on a claude/* ref.
+# account id is the environment variable CLOUDFLARE_ACCOUNT_ID. analyst-merge, analyst-settle and analyst-track
+# dispatch it (ref main) after a commit; a daily backstop covers owner commits. It runs on main only.
 name: analyst-deploy
 
 on:
-  workflow_run:
-    workflows: [analyst-merge, analyst-settle]
-    types: [completed]
   workflow_dispatch:
+  schedule:
+    - cron: "50 23 * * *"
 
 concurrency:
   group: analyst-deploy
@@ -19,13 +19,16 @@ permissions:
 
 jobs:
   deploy:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: analyst-pages
     env:
       WRANGLER_SEND_METRICS: "false"
     steps:
+      - name: Run guard (main only)
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then echo "guard: not refs/heads/main"; exit 1; fi
+
       - uses: actions/checkout@v4
         with:
           ref: main

@@ -35,7 +35,7 @@ def legit_attempt_still_lands(h):
 
 
 def settle_runs(h, run_id=77):
-    ws = merge.Workspace(h.world.clone(f"settle{run_id}"))
+    ws = h.workspace(f"settle{run_id}")
     return settle_run.run_settle(ws, h.api, h.now, {"workflow": "analyst-settle", "id": run_id, "attempt": 1,
                                                     "event": "schedule"}, verdict=None)
 
@@ -46,7 +46,7 @@ def rejections(h):
 
 def test_orphan_push_is_agent_scope_and_merge_goes_on(tmp_path):
     h = Harness(tmp_path)
-    d = h.world.clone("orphan")
+    d = h.world.clone_inbox("orphan")
     git(d, "checkout", "-q", "--orphan", "o")
     git(d, "rm", "-rq", "--cached", ".")
     p = d / CANARY_ATT
@@ -56,7 +56,7 @@ def test_orphan_push_is_agent_scope_and_merge_goes_on(tmp_path):
     git(d, "commit", "-q", "-m", "orphan")
     git(d, "push", "-q", "-f", "origin", "HEAD:refs/heads/claude/analyst-orphan")
     [push] = h.register_pushes()
-    h.merge(push)                                                                  # no exception
+    h.merge()                                                                      # no exception
     w = h.last_witness()
     assert (w["kind"], w["id"], w["status"], w["reason"]) == ("push", None, "rejected", "agent_scope")
     assert w["push"]["after"] == push[1] and w["writes"] == []
@@ -91,10 +91,10 @@ def test_unfetchable_commit_of_a_deleted_branch_is_agent_scope(tmp_path):
     h = Harness(tmp_path)
     sha = h.agent_branch("claude/analyst-gone", {CANARY_ATT: attempt_bytes(h, W1)})
     h.register_pushes()                                                            # the merge run never happened
-    git(h.world.origin, "update-ref", "-d", "refs/heads/claude/analyst-gone")
-    git(h.world.origin, "reflog", "expire", "--expire=now", "--all")
-    git(h.world.origin, "gc", "-q", "--prune=now")
-    assert git(h.world.origin, "cat-file", "-t", sha, check=False) != "commit"
+    git(h.world.inbox, "update-ref", "-d", "refs/heads/claude/analyst-gone")      # (the inbox's rules refuse this;
+    git(h.world.inbox, "reflog", "expire", "--expire=now", "--all")                 # the test removes it by hand)
+    git(h.world.inbox, "gc", "-q", "--prune=now")
+    assert git(h.world.inbox, "cat-file", "-t", sha, check=False) != "commit"
     h.at(2026, 11, 10, 7, 22)
     h.merge()                                                                      # closer step 1: no exception
     w = h.last_witness()
@@ -173,11 +173,11 @@ def test_a_comment_whose_agent_file_cannot_be_fetched_does_not_halt(tmp_path):
     h.merge_fail = True
     [(ref, sha)] = h.register_pushes()
     with pytest.raises(RuntimeError):
-        h.merge((ref, sha))
+        h.merge()
     h.merge_fail = False
-    git(h.world.origin, "update-ref", "-d", ref)
-    git(h.world.origin, "reflog", "expire", "--expire=now", "--all")
-    git(h.world.origin, "gc", "-q", "--prune=now")
+    git(h.world.inbox, "update-ref", "-d", ref)
+    git(h.world.inbox, "reflog", "expire", "--expire=now", "--all")
+    git(h.world.inbox, "gc", "-q", "--prune=now")
     h.at(2026, 11, 10, 8, 10)                                                      # after W1's deadline + 20 min
     h.merge()                                                                      # no exception
     ws = h.witnesses()

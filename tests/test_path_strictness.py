@@ -25,7 +25,7 @@ def attempt_bytes(h, draw, n=1):
 
 def push_raw(h, path, body, branch):
     """Push one file under an exact (possibly odd) path, bypassing the working tree."""
-    d = h.world.clone(f"raw-{branch}")
+    d = h.world.clone_inbox(f"raw-{branch}")
     git(d, "checkout", "-q", "-B", "work", "origin/main")
     blob = subprocess.run(["git", "-C", str(d), "hash-object", "-w", "--stdin"], input=body, capture_output=True,
                           check=True).stdout.decode().strip()
@@ -42,11 +42,11 @@ def locked_call_body(h, mode):
     h.at(2026, 11, 10, 7, 25)
     assert h.run("lock", str(h.write_plan(PLAN))) == 0
     ref = f"refs/heads/claude/analyst-{mode}-call-{W1}"
-    tip = git(h.world.origin, "rev-parse", ref)
+    tip = git(h.world.inbox, "rev-parse", ref)
     cpath = ("analyst/canary/calls/" if mode == "canary" else "analyst/calls/") + f"{W1}.json"
-    body = subprocess.run(["git", "-C", str(h.world.origin), "show", f"{tip}:{cpath}"], capture_output=True,
+    body = subprocess.run(["git", "-C", str(h.world.inbox), "show", f"{tip}:{cpath}"], capture_output=True,
                           check=True).stdout
-    git(h.world.origin, "update-ref", "-d", ref)
+    git(h.world.inbox, "update-ref", "-d", ref)                      # never registered: removed by hand
     return cpath, body
 
 
@@ -97,7 +97,7 @@ def test_live_settle_goes_on_after_a_trailing_newline_call_push(tmp_path):
     h.at(2026, 11, 11, 9, 0)
     h.world.owner_commit(store_files(clock.days_range(dt.date(2026, 9, 1), dt.date(2026, 11, 10))), "analyst mirror")
     for i in range(2):
-        ws = merge.Workspace(h.world.clone(f"settle{i}"))
+        ws = h.workspace(f"settle{i}")
         settle_run.run_settle(ws, h.api, h.now, {"workflow": "analyst-settle", "id": 9 + i, "attempt": 1,
                                                  "event": "push"}, verdict=None)   # no exception
     t = h.main_json(f"analyst/terminal/{W1}.json")
@@ -108,7 +108,7 @@ def test_a_symlink_at_an_allowed_path_is_agent_scope(tmp_path):
     """Amended R-AN-33: an allowed path that is not a regular file is `agent_scope` (a symlink used to be read as
     the link's target text and logged as `invalid_content`)."""
     h = Harness(tmp_path)
-    d = h.world.clone("agent")
+    d = h.world.clone_inbox("agent")
     git(d, "checkout", "-q", "-B", "work", "origin/main")
     p = d / CANARY_ATT
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -133,10 +133,10 @@ def test_one_invalid_content_witness_per_lost_file(tmp_path):
     h.merge_fail = True
     [(ref, sha)] = h.register_pushes()
     with pytest.raises(RuntimeError):
-        h.merge((ref, sha))
-    git(h.world.origin, "update-ref", "-d", ref)
-    git(h.world.origin, "reflog", "expire", "--expire=now", "--all")
-    git(h.world.origin, "gc", "-q", "--prune=now")
+        h.merge()
+    git(h.world.inbox, "update-ref", "-d", ref)
+    git(h.world.inbox, "reflog", "expire", "--expire=now", "--all")
+    git(h.world.inbox, "gc", "-q", "--prune=now")
     h.at(2026, 11, 10, 7, 30)
     with pytest.raises(RuntimeError):
         h.merge()                                     # posts the invalid_content witness, then the push fails

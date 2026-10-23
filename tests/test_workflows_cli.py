@@ -21,45 +21,120 @@ def load(name):
     return doc
 
 
+NAMES = ["analyst-canary-poll.yml", "analyst-deploy.yml", "analyst-inbox-mirror.yml", "analyst-merge.yml",
+         "analyst-settle.yml", "analyst-track.yml"]
+FORBIDDEN_EVENTS = ("pull_request", "pull_request_target", "issue_comment", "issues", "repository_dispatch",
+                    "pull_request_review", "pull_request_review_comment", "discussion", "discussion_comment")
+MERGE_CRONS = ["*/5 6-8,12-14 * * 1-5", "*/10 16-17 * * 2-6", "*/10 18-19,22-23 * * 6", "33 * * * *"]
+
+
+def guard_step(steps):
+    """The first step of every job that writes main, posts on the issue or holds a secret: it exits 1 unless
+    GITHUB_REF is refs/heads/main (register R-AN-75 item 4)."""
+    g = steps[0]
+    assert "uses" not in g and "refs/heads/main" in g["run"] and "exit 1" in g["run"], g
+    return g
+
+
 def test_every_workflow_is_script_only_and_declares_permissions():
     names = sorted(p.name for p in WF.glob("*.yml"))
-    assert names == ["analyst-canary-poll.yml", "analyst-deploy.yml", "analyst-merge.yml", "analyst-settle.yml",
-                     "analyst-track.yml"]
+    assert names == NAMES
     for n in names:
         d = load(n)
         assert "permissions" in d, n
-        assert "pull_request" not in d["on"] and "pull_request_target" not in d["on"], n
+        assert not set(d["on"]) & set(FORBIDDEN_EVENTS), n
         text = (WF / n).read_text()
         assert "anthropic" not in text.lower() and "claude " not in text.lower()
 
 
-def test_merge_runs_mains_code_on_claude_pushes():
+def test_the_trigger_table_of_r_an_75_item_4():
+    want = {
+        "analyst-merge.yml": {"schedule", "workflow_dispatch"},
+        "analyst-settle.yml": {"push", "schedule", "workflow_dispatch"},
+        "analyst-deploy.yml": {"workflow_dispatch", "schedule"},
+        "analyst-track.yml": {"workflow_dispatch"},
+        "analyst-canary-poll.yml": {"schedule", "workflow_dispatch"},
+        "analyst-inbox-mirror.yml": {"push", "workflow_run", "schedule", "workflow_dispatch"},
+    }
+    perms = {
+        "analyst-merge.yml": {"contents": "write", "issues": "write", "actions": "write"},
+        "analyst-settle.yml": {"contents": "write", "issues": "write", "actions": "write"},
+        "analyst-deploy.yml": {"contents": "read"},
+        "analyst-track.yml": {"contents": "write", "actions": "write"},
+        "analyst-canary-poll.yml": {"contents": "write"},
+        "analyst-inbox-mirror.yml": {"contents": "read"},
+    }
+    for n in NAMES:
+        d = load(n)
+        assert set(d["on"]) == want[n], n
+        assert d["permissions"] == perms[n], n
+        for job in d["jobs"].values():
+            guard_step(job["steps"])
+            co = [s for s in job["steps"] if str(s.get("uses", "")).startswith("actions/checkout@")]
+            assert co and co[0]["with"]["ref"] == "main", n
+
+
+def test_merge_polls_and_runs_mains_code():
     d = load("analyst-merge.yml")
-    assert d["on"]["push"]["branches"] == ["claude/analyst-**"]
+    assert "push" not in d["on"]
+    assert [c["cron"] for c in d["on"]["schedule"]] == MERGE_CRONS
     assert d["concurrency"] == {"group": "analyst", "cancel-in-progress": False}
     steps = d["jobs"]["merge"]["steps"]
-    assert steps[0]["uses"].startswith("actions/checkout@") and steps[0]["with"]["ref"] == "main"
+    g = guard_step(steps)
+    assert "schedule" in g["run"] and "workflow_dispatch" in g["run"] and "GITHUB_EVENT_NAME" in g["run"]
+    assert steps[1]["uses"].startswith("actions/checkout@") and steps[1]["with"]["ref"] == "main"
     assert "${{ secrets." not in (WF / "analyst-merge.yml").read_text()
-    assert d["permissions"] == {"contents": "write", "issues": "write", "actions": "write"}
+    assert "environment" not in d["jobs"]["merge"]
 
 
 def test_settle_and_track_and_deploy():
     s = load("analyst-settle.yml")
-    assert s["concurrency"]["group"] == "analyst" and s["on"]["push"]["paths"] == ["mirror/**"]
+    assert s["concurrency"] == {"group": "analyst", "cancel-in-progress": False}
+    assert s["on"]["push"] == {"branches": ["main"], "paths": ["mirror/**"]}
     assert s["on"]["schedule"] == [{"cron": "15 23 * * *"}]
     t = load("analyst-track.yml")
     assert "schedule" not in t["on"] and t["jobs"]["track"]["timeout-minutes"] == 330
     assert "call_id" in t["on"]["workflow_dispatch"]["inputs"]
     assert "${{ inputs.call_id }}" not in t["jobs"]["track"]["steps"][-1]["run"]   # passed via env only
     dep = load("analyst-deploy.yml")
+    assert "workflow_run" not in dep["on"] and dep["on"]["schedule"] == [{"cron": "50 23 * * *"}]
     assert dep["jobs"]["deploy"]["environment"] == "analyst-pages"
+    assert dep["concurrency"] == {"group": "analyst-deploy", "cancel-in-progress": True}
     for n in ("analyst-merge.yml", "analyst-settle.yml", "analyst-track.yml", "analyst-canary-poll.yml"):
         assert "environment" not in json.dumps(load(n)["jobs"]), n
-    refs = set()
+    refs = {}
     for p in WF.glob("*.yml"):
-        refs |= set(re.findall(r"secrets\.([A-Z_]+)", p.read_text()))
-    assert refs == {"CLOUDFLARE_API_TOKEN"}
-    assert "secrets.CLOUDFLARE_API_TOKEN" in (WF / "analyst-deploy.yml").read_text()
+        for r in re.findall(r"secrets\.([A-Z_]+)", p.read_text()):
+            refs.setdefault(r, set()).add(p.name)
+    assert refs == {"CLOUDFLARE_API_TOKEN": {"analyst-deploy.yml"}, "INBOX_MIRROR_KEY": {"analyst-inbox-mirror.yml"}}
+
+
+def test_inbox_mirror_workflow():
+    d = load("analyst-inbox-mirror.yml")
+    assert d["on"]["push"] == {"branches": ["main"]}
+    wr = d["on"]["workflow_run"]
+    assert sorted(wr["workflows"]) == ["analyst-canary-poll", "analyst-merge", "analyst-settle", "analyst-track"]
+    assert wr["types"] == ["completed"] and wr["branches"] == ["main"]
+    assert d["on"]["schedule"] == [{"cron": "10,40 * * * *"}]
+    assert d["concurrency"]["group"] == "analyst-inbox-mirror"
+    job = d["jobs"]["mirror"]
+    assert job["environment"] == "analyst-inbox"
+    g = guard_step(job["steps"])
+    assert "workflow_run" in g["run"] and "head_branch" in json.dumps(g)
+    co = job["steps"][1]
+    assert co["uses"].startswith("actions/checkout@") and co["with"] == {"ref": "main", "fetch-depth": 0,
+                                                                           "persist-credentials": False}
+    text = (WF / "analyst-inbox-mirror.yml").read_text()
+    assert "--force" not in text and "secrets.INBOX_MIRROR_KEY" in text
+    run = job["steps"][-1]
+    assert run["env"] == {"INBOX_MIRROR_KEY": "${{ secrets.INBOX_MIRROR_KEY }}",
+                          "WORKFLOW_RUN_BRANCH": "${{ github.event.workflow_run.head_branch }}"}
+    assert run["run"].strip() == "python -I analyst/jobs/inbox_mirror.py"
+
+
+def test_the_workflow_names_match_the_mirror_triggers():
+    for n in ("analyst-merge.yml", "analyst-settle.yml", "analyst-canary-poll.yml", "analyst-track.yml"):
+        assert load(n)["name"] == n[:-4]
 
 
 def test_no_secret_material_in_files():

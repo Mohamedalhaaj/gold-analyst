@@ -1,27 +1,31 @@
 """analyst-merge and the closer (prereg §3 Lock evidence, §1 Completeness, R1(c); register R-AN-32..R-AN-39,
-R-AN-48, R-AN-49). FROZEN.
+R-AN-48, R-AN-49, §16.18 A6). FROZEN.
 
-The job runs main's code only. A pushed commit is fetched as data (`git fetch origin <after>`, `git diff`,
+The job runs main's code only. Sessions push to the agent inbox (PINS.inbox_repo), never to gold-analyst; the job
+finds their pushes in the inbox's activity log, read in full or not at all (R-AN-32), and fetches each pushed commit
+from the public inbox as data, without gold-analyst's credential (`git fetch <inbox url> <after>`, `git diff`,
 `git show`); nothing from it is executed, and the agent's commit is never merged: an accepted file is copied byte for
-byte. Witness comments are posted on the pinned issue BEFORE the files are committed; only comments by
-`github-actions[bot]` count (the repository is public, so anyone may comment).
+byte. Witness comments are posted on gold-analyst's pinned issue BEFORE the files are committed; only comments by
+`github-actions[bot]` that were never edited count (R-AN-35), while seq counts every bot witness header.
 
 Interpretations beyond the register (logged for its amendment): a witness carries `writes` [{path, sha256, record}]
 so that a comment without its file can be completed exactly (record = the script-created object, null for a copied
 agent file); `seq` is global across modes; a well-formed push for a window outside the mode's period is rejected with
 `mode`; a lesson without an earlier accepted lesson attempt is rejected `lesson_cap`; a playbook without an accepted
-revision attempt for its version is rejected `version`.
+revision attempt for its version is rejected `version`; with PINS.inbox_from_utc unset, no inbox entry is processed.
 
 No push can halt the merge or the closer (register §16 note of 2026-10-23, review blocker B2): an orphan or unfetchable
-commit, a path whose call_id names no window (an impossible date or a weekend) and a non-regular file are
-`agent_scope`; an unexpected failure while an allowed file's content is checked, before anything was written or
-posted, is `invalid_content`; a comment whose agent file cannot be reproduced gets a second witness `invalid_content`.
+commit, a fetch beyond its bound, a blob over 4 MiB, a path whose call_id names no window (an impossible date or a
+weekend) and a non-regular file are `agent_scope`; an unexpected failure while an allowed file's content is checked,
+before anything was written or posted, is `invalid_content`; a comment whose agent file cannot be reproduced gets a
+second witness `invalid_content`. Only a failed activity read stops a run, before it writes anything (R-AN-39).
 """
 import datetime as dt
 import re
 import subprocess
 
 from . import clock, paths, plan, rec, records, tables, weekly, witness
+from .ghapi import ActivityReadFailed
 from .repo import DirView
 
 WITNESS_SCHEMA = "analyst-witness/1"
@@ -33,6 +37,14 @@ BOT = "github-actions[bot]"
 GRACE = dt.timedelta(minutes=20)
 CID = r"[0-9]{4}-[0-9]{2}-[0-9]{2}_W[12]"
 HEADER_RE = re.compile(r"^analyst-witness/1 (\S+) (\S+) seq ([0-9]+)$")
+ANALYST_REF = "refs/heads/claude/analyst-"
+SHA_RE = re.compile(r"[0-9a-f]{40}")
+WINDOW_DAYS = 14                     # pushes older than this are not processed (R-AN-32)
+FETCH_TIMEOUT_S = 180                # per git fetch of a pushed commit (R-AN-32, fetch bound)
+FETCH_TRIES = 3
+FETCH_RETRY_S = 20
+MAX_BLOB = 4 * 1024 * 1024           # an allowed blob above this is agent_scope and never read
+NO_AUTH = ("-c", "http.https://github.com/.extraheader=")   # drops the token actions/checkout persisted
 TERMINAL_STATUSES = ("called", "stay_out", "no_call:refusal", "no_call:invalid", "no_call:data", "no_call:d_ref",
                      "no_call:late", "no_call:run", "missed:trigger", "missed:push", "skipped:holiday")
 
@@ -92,15 +104,20 @@ def expected_windows(mode_doc, mode, until):
 
 
 class Workspace:
-    """The checkout of main the job writes into, plus git access to pushed commits as data."""
+    """The checkout of main the job writes into, plus git access to pushed commits as data. `inbox_url` is where
+    pushed commits are fetched from (the public inbox); `sleep` paces the fetch retries."""
 
-    def __init__(self, repo_dir, runner=subprocess.run):
+    def __init__(self, repo_dir, runner=subprocess.run, inbox_url=None, sleep=lambda s: None):
         self.repo_dir = str(repo_dir)
         self.run = runner
         self.view = DirView(repo_dir)
+        self.inbox_url = inbox_url
+        self.sleep = sleep
 
-    def git(self, *args, check=True, input_bytes=None):
-        p = self.run(["git", "-C", self.repo_dir, *args], capture_output=True, input=input_bytes)
+    def git(self, *args, check=True, input_bytes=None, timeout=None, pre=()):
+        argv = ["git", "-C", self.repo_dir, *pre, *args]
+        p = self.run(argv, capture_output=True, input=input_bytes, timeout=timeout) if timeout else \
+            self.run(argv, capture_output=True, input=input_bytes)
         if check and p.returncode != 0:
             raise RuntimeError(f"git {args[0]} failed: {p.stderr.decode(errors='replace')[-300:]}")
         return p
@@ -108,13 +125,39 @@ class Workspace:
     def head(self):
         return self.git("rev-parse", "HEAD").stdout.decode().strip()
 
+    def has_commit(self, sha):
+        return self.git("cat-file", "-e", f"{sha}^{{commit}}", check=False).returncode == 0
+
     def fetch_commit(self, sha, ref=None):
-        if self.git("fetch", "--quiet", "--no-tags", "origin", sha, check=False).returncode == 0:
-            return
-        if ref:
-            self.git("fetch", "--quiet", "--no-tags", "origin", f"+{ref}:refs/analyst-fetch/{sha}", check=False)
-        if self.git("cat-file", "-e", f"{sha}^{{commit}}", check=False).returncode != 0:
+        """Fetch a pushed commit from the inbox, as data and without credentials (R-AN-32): by its sha, else the
+        push's ref into refs/analyst-fetch/<sha>. Each git fetch has FETCH_TIMEOUT_S; a failed try is repeated up to
+        FETCH_TRIES times, FETCH_RETRY_S apart. A timeout, or the last failed try, raises: the commit cannot be
+        fetched."""
+        if not SHA_RE.fullmatch(sha or "") or not self.inbox_url:
             raise RuntimeError("the pushed commit cannot be fetched")
+        if self.has_commit(sha):
+            return
+        specs = [[sha]] + ([[f"+{ref}:refs/analyst-fetch/{sha}"]] if ref else [])
+        for i in range(FETCH_TRIES):
+            for spec in specs:
+                try:
+                    self.git("fetch", "--quiet", "--no-tags", self.inbox_url, *spec, check=False,
+                             timeout=FETCH_TIMEOUT_S, pre=NO_AUTH)
+                except subprocess.TimeoutExpired:
+                    raise RuntimeError("the fetch of the pushed commit timed out") from None
+                if self.has_commit(sha):
+                    return
+            if i < FETCH_TRIES - 1:
+                self.sleep(FETCH_RETRY_S)
+        raise RuntimeError("the pushed commit cannot be fetched")
+
+    def blob_size(self, sha, path):
+        """The size of the blob at `path` in commit `sha` (`git cat-file -s`), or None."""
+        p = self.git("cat-file", "-s", f"{sha}:{path}", check=False)
+        try:
+            return int(p.stdout.decode().strip()) if p.returncode == 0 else None
+        except ValueError:
+            return None
 
     def diff_entries(self, after):
         base = self.git("merge-base", "HEAD", after).stdout.decode().strip()
@@ -162,48 +205,130 @@ class Workspace:
 
 
 class Merge:
-    def __init__(self, ws, api, now, run_info, sleep=lambda s: None):
+    def __init__(self, ws, api, now, run_info, sleep=lambda s: None, inbox=None, log=lambda s: None):
         self.ws, self.api, self.now, self.sleep = ws, api, now, sleep
+        self.inbox = inbox                   # the inbox activity reader (ghapi.InboxActivity)
+        self.log = log                       # one enum per line; never data
         self.run_info = run_info            # {workflow, id, attempt, event}
         self.view = ws.view
         self.mode_doc = paths.read_mode(self.view)
         self.mode = self.mode_doc["mode"]
         self.pins = paths.read_pins(self.view) or {}
         self.issue = self.pins.get("witness_issue")
+        self.inbox_repo = self.pins.get("inbox_repo")
+        self.inbox_from = self.pins.get("inbox_from_utc")
+        if ws.inbox_url is None and self.inbox_repo:
+            ws.inbox_url = f"https://github.com/{self.inbox_repo}.git"
         self.head_sha = ws.head()
         self.holidays = tables.load_holidays(self.view)
+        self.acts = None                     # the inbox activity entries of the complete read
+        self.activity_read = None            # token | anonymous | failed
+        self._all = None
         self._comments = None
+        self._file_afters = None
         self._seq = None
         self.tracks = []
         self.subjects = []
+        self.seqs = []                       # the witness seqs whose files this run wrote
         self._run_created = None
         self._acting = False                 # set once a push's processing has written or posted anything
 
+    # ------------------------------------------------------------ the inbox's activity (R-AN-32, R-AN-39 step 1)
+    def read_inbox(self):
+        """The complete read of the inbox's activity. It comes before anything is written, completed or posted: a
+        failed read logs `activity_read=failed` and raises ActivityReadFailed, and the run stops there."""
+        try:
+            if self.inbox is None or not self.inbox_repo:
+                raise ActivityReadFailed("no inbox")
+            acts, how = self.inbox.read_activity()
+            if not isinstance(acts, list):
+                raise ActivityReadFailed("not a list")
+        except Exception as e:  # noqa: BLE001 - any failure of the read is a failed read
+            self.activity_read = "failed"
+            self.log("activity_read=failed")
+            if isinstance(e, ActivityReadFailed):
+                raise
+            raise ActivityReadFailed(type(e).__name__) from None
+        self.acts, self.activity_read = acts, how
+        self.log(f"activity_read={how}")
+        if not self.inbox_from:
+            self.log("inbox_from_utc=unset")
+        return acts
+
+    def pushes_to_process(self):
+        """The inbox pushes to witness, in ascending (timestamp, id) order (R-AN-32, R-AN-34): entries whose ref
+        starts refs/heads/claude/analyst-, whose after is a commit (not 40 zeros) and whose timestamp is at or after
+        PINS.inbox_from_utc. A sha's entry is its earliest by (timestamp, id); it is processed when that time is
+        within the last WINDOW_DAYS days and no counting witness names the sha. Probe refs (claude/probe-*), main and
+        anything else are never read, so they can neither add a push nor give one an earlier time."""
+        if not self.inbox_from:
+            return []
+        first = {}
+        for e in self.acts or []:
+            if not isinstance(e, dict):
+                continue
+            ref, after = e.get("ref"), e.get("after")
+            if not isinstance(ref, str) or not ref.startswith(ANALYST_REF) or not isinstance(after, str) \
+                    or after == ZERO40:
+                continue
+            try:
+                t = rec.normalize_gh(e.get("timestamp"))
+            except (ValueError, TypeError):
+                continue
+            if t < self.inbox_from:
+                continue
+            aid = e.get("id")
+            key = (t, aid if isinstance(aid, int) and not isinstance(aid, bool) else -1)
+            if after not in first or key < first[after][0]:
+                first[after] = (key, e)
+        lim = rec.iso(self.now() - dt.timedelta(days=WINDOW_DAYS))
+        todo = [(key, e) for key, e in first.values() if key[0] >= lim and not self.witnessed_after(e["after"])]
+        return [e for _key, e in sorted(todo, key=lambda x: x[0])]
+
     # ------------------------------------------------------------ comments, seq
+    def _read_comments(self):
+        """Every github-actions[bot] comment whose first line is a witness header (for seq, R-AN-35), and among them
+        the ones that count: exactly two lines, a JSON payload, and updated_at equal to created_at (never edited)."""
+        self._all, self._comments = [], []
+        for c in self.api.comments(self.issue) if self.issue else []:
+            if (c.get("user") or {}).get("login") != BOT:
+                continue
+            lines = (c.get("body") or "").split("\n")
+            m = HEADER_RE.match(lines[0]) if lines else None
+            if not m:
+                continue
+            self._all.append(int(m.group(3)))
+            if len(lines) != 2:
+                continue
+            try:
+                payload = rec.loads(lines[1])
+                created = rec.normalize_gh(c["created_at"])
+                edited = rec.normalize_gh(c.get("updated_at")) != created
+            except (ValueError, TypeError, KeyError):
+                continue
+            if edited or not isinstance(payload, dict):
+                continue
+            self._comments.append({"id": c["id"], "created_utc": created, "seq": int(m.group(3)),
+                                   "payload": payload, "body": c["body"]})
+
     def bot_comments(self):
+        """The witness comments that count (R-AN-35)."""
         if self._comments is None:
-            self._comments = []
-            for c in self.api.comments(self.issue) if self.issue else []:
-                if (c.get("user") or {}).get("login") != BOT:
-                    continue
-                lines = (c.get("body") or "").split("\n")
-                m = HEADER_RE.match(lines[0]) if lines else None
-                if not m or len(lines) != 2:
-                    continue
-                try:
-                    payload = rec.loads(lines[1])
-                except ValueError:
-                    continue
-                self._comments.append({"id": c["id"], "created_utc": rec.normalize_gh(c["created_at"]),
-                                       "seq": int(m.group(3)), "payload": payload, "body": c["body"]})
+            self._read_comments()
         return self._comments
+
+    def bot_seqs(self):
+        """The seqs of every bot witness header, edited or not."""
+        if self._all is None:
+            self._read_comments()
+        return self._all
 
     def next_seq(self):
         if self._seq is None:
             seqs = [0]
             for mode in ("live", "canary"):
                 seqs += [w.get("seq", 0) for w in witness.witnesses(self.view, mode)]
-            seqs += [c["seq"] for c in self.bot_comments()]
+            seqs += self.bot_seqs()
             self._seq = max(seqs)
         self._seq += 1
         return self._seq
@@ -217,18 +342,22 @@ class Merge:
         return self._run_created
 
     def witnessed_after(self, after):
-        for mode in ("live", "canary"):
-            for w in witness.witnesses(self.view, mode):
-                if (w.get("push") or {}).get("after") == after:
-                    return True
+        """True when a witness file on main at the run's start, or a counting witness comment (those posted or
+        completed by this run included), names the push's sha."""
+        if self._file_afters is None:
+            self._file_afters = {(w.get("push") or {}).get("after") for mode in ("live", "canary")
+                                 for w in witness.witnesses(self.view, mode)}
+        if after in self._file_afters:
+            return True
         return any((c["payload"].get("push") or {}).get("after") == after for c in self.bot_comments())
 
     # ------------------------------------------------------------ completion of comments without files
     def complete_from_comments(self):
-        """Write the files of every bot witness comment that has no witness file yet (a run that failed after posting).
-        A write that cannot be reproduced (the agent's commit can no longer be fetched, or its bytes differ) does not
-        stop the run: the witness file is still written from its comment, and the push gets a second, rejected
-        witness `invalid_content` naming the missing path (register §16 note of 2026-10-23, review blocker B2)."""
+        """Write the files of every counting bot witness comment (R-AN-35: never edited) that has no witness file
+        yet (a run that failed after posting). A write that cannot be reproduced (the agent's commit can no longer be
+        fetched, or its bytes differ) does not stop the run: the witness file is still written from its comment, and
+        the push gets a second, rejected witness `invalid_content` naming the missing path (register §16 note of
+        2026-10-23, review blocker B2)."""
         have = set()
         for mode in ("live", "canary"):
             have |= {w.get("seq") for w in witness.witnesses(self.view, mode)}
@@ -253,6 +382,7 @@ class Merge:
                 self.ws.write(wr["path"], data)
             mode = doc.get("mode") or "live"
             self.ws.write(paths.witness_path(mode, c["seq"]), rec.record_bytes(doc))
+            self.seqs.append(c["seq"])
             self.subjects.append(f"complete seq {c['seq']}")
             if missing:
                 unrecovered.append((mode, doc, missing[0]))
@@ -289,33 +419,13 @@ class Merge:
                           "body_sha256": rec.sha256_bytes(body.encode("utf-8"))}
         self.bot_comments().append({"id": c["id"], "created_utc": doc["comment"]["created_utc"], "seq": doc["seq"],
                                     "payload": {k: v for k, v in doc.items() if k != "comment"}, "body": body})
+        self.bot_seqs().append(doc["seq"])
         for wr in doc["writes"]:
             if wr.get("record") is not None:
                 self.ws.write(wr["path"], rec.record_bytes(wr["record"]))
         self.ws.write(paths.witness_path(mode, doc["seq"]), rec.record_bytes(doc))
+        self.seqs.append(doc["seq"])
         return doc
-
-    # ------------------------------------------------------------ server times (R-AN-34)
-    def push_time(self, ref, after):
-        entry = None
-        for i in range(3):
-            try:
-                for e in self.api.activity(ref=ref):
-                    if e.get("after") == after:
-                        entry = e
-                        break
-            except Exception:  # noqa: BLE001
-                entry = None
-            if entry is not None:
-                break
-            if i < 2:
-                self.sleep(20)
-        if entry is None:
-            return {"activity_id": None, "activity_type": None, "activity_utc": None, "actor": None}, \
-                self.run_created(), "run_created"
-        t = rec.normalize_gh(entry["timestamp"])
-        return {"activity_id": entry.get("id"), "activity_type": entry.get("activity_type"), "activity_utc": t,
-                "actor": (entry.get("actor") or {}).get("login")}, t, "activity"
 
     # ------------------------------------------------------------ chain and terminal (R-AN-36, R-AN-37)
     def prev_chain(self, mode, w):
@@ -404,25 +514,15 @@ class Merge:
         else:
             self.write_terminal(mode, w, "missed:trigger", self.refusal_detail(w), "closer")
 
-    def closer(self, skip_after=None):
+    def closer(self):
         now = self.now()
-        # 1. unwitnessed claude/analyst-* pushes of the last 14 days
-        try:
-            acts = self.api.activity(time_period="month")
-        except Exception:  # noqa: BLE001
-            acts = []
-        lim = rec.iso(now - dt.timedelta(days=14))
-        todo = []
-        for e in acts:
-            ref = e.get("ref") or ""
-            after = e.get("after") or ZERO40
-            if not ref.startswith("refs/heads/claude/analyst-") or after == ZERO40 or after == skip_after:
-                continue
-            if rec.normalize_gh(e["timestamp"]) < lim or self.witnessed_after(after):
-                continue
-            todo.append((rec.normalize_gh(e["timestamp"]), ref, e.get("before"), after))
-        for _t, ref, before, after in sorted(todo):
-            self.process_push(ref, before, after)
+        # 1. the complete read of the inbox's activity (a failed read raises here, before anything is written),
+        #    then every unwitnessed claude/analyst-* push of the last 14 days, in (timestamp, id) order. A failure
+        #    after a witness comment was posted raises too, so no window is closed over a push not yet witnessed.
+        if self.acts is None:
+            self.read_inbox()
+        for e in self.pushes_to_process():
+            self.process_push(e)
         # 2. expected windows past deadline + 20 min without a terminal: the current mode's, and a finished
         #    canary period's (canary_to set) after the switch to live, so no canary window stays open
         for mode in self.closing_modes():
@@ -461,6 +561,21 @@ class Merge:
                 self.subjects.append(f"revision {iw} skipped")
             sat += dt.timedelta(days=7)
 
+    # ------------------------------------------------------------ dispatches (R-AN-32, R-AN-40, R-AN-75 item 4)
+    def dispatch_after_commit(self):
+        """After a commit reached main: analyst-track (ref main, input call_id) for each buy/sell `called` live
+        terminal this run wrote, then analyst-deploy (ref main) once. Both are display only, so a failed dispatch is
+        logged and does not fail the run."""
+        for cid in self.tracks:
+            try:
+                self.api.dispatch("analyst-track.yml", "main", {"call_id": cid})
+            except Exception:  # noqa: BLE001
+                self.log("dispatch_failed analyst-track")
+        try:
+            self.api.dispatch("analyst-deploy.yml", "main", {})
+        except Exception:  # noqa: BLE001
+            self.log("dispatch_failed analyst-deploy")
+
     # ------------------------------------------------------------ one push (R-AN-33)
     def reject(self, mode, kind, id_, reason, path, push, window=None, status="rejected"):
         doc = {"seq": self.next_seq(), "kind": kind, "id": id_, "status": status, "reason": reason, "path": path,
@@ -469,22 +584,27 @@ class Merge:
         self.subjects.append(f"{kind} {id_ or '-'} {status} {reason or ''}".strip())
         return doc
 
-    def process_push(self, ref, before, after):
-        """Witness one push. Whatever the push contains, this returns a witness and never raises because of it
-        (review blocker B2): a push whose diff cannot be computed (an orphan or unfetchable commit), a path outside
-        the allowlist (a call_id naming no window included) or a path that is not a regular file is `agent_scope`;
-        an unexpected failure while an allowed file's content is checked, before anything was written or posted, is
-        `invalid_content`. Failures after a witness comment was posted (the API, the workspace) still raise: the
-        next run completes that comment."""
-        if after == ZERO40 or self.witnessed_after(after):
+    def process_push(self, entry):
+        """Witness one inbox push, given its activity entry (R-AN-32, R-AN-34): its time is the entry's timestamp
+        (`time_source` activity, `push.repo` the inbox). Whatever the push contains, this returns a witness and
+        never raises because of it (review blocker B2): a push whose diff cannot be computed (an orphan or
+        unfetchable commit, a fetch beyond its bound), a path outside the allowlist (a call_id naming no window
+        included), a blob over 4 MiB or a path that is not a regular file is `agent_scope`; an unexpected failure
+        while an allowed file's content is checked, before anything was written or posted, is `invalid_content`.
+        Failures after a witness comment was posted (the API, the workspace) still raise: the next run completes
+        that comment."""
+        ref, before, after = entry.get("ref"), entry.get("before"), entry.get("after")
+        if not after or after == ZERO40 or self.witnessed_after(after):
             return None
+        t_utc, t_src = rec.normalize_gh(entry["timestamp"]), "activity"
+        push = {"repo": self.inbox_repo, "ref": ref, "before": before, "after": after,
+                "activity_id": entry.get("id"), "activity_type": entry.get("activity_type"), "activity_utc": t_utc,
+                "actor": (entry.get("actor") or {}).get("login")}
         try:
             self.ws.fetch_commit(after, ref)
             entries = self.ws.diff_entries(after)
         except Exception:  # noqa: BLE001 - checked below: no diff means not exactly one allowed added file
             entries = None
-        pinfo, t_utc, t_src = self.push_time(ref, after)
-        push = {"ref": ref, "before": before, "after": after, **pinfo}
         wmode = self.mode if self.mode in ("live", "canary") else "live"
         if entries is None:
             return self.reject(wmode, "push", None, "agent_scope", None, push)
@@ -500,6 +620,9 @@ class Merge:
         if pmode != self.mode:
             return self.reject(wmode, kind, id_, "mode", path, push)
         mode = pmode
+        size = self.ws.blob_size(after, path)
+        if size is not None and size > MAX_BLOB:  # never read (R-AN-32, fetch bound)
+            return self.reject(wmode, "push", None, "agent_scope", path, push)
         data = self.ws.show(after, path)
         if data is None:                          # not a regular file (a symlink or a submodule entry)
             return self.reject(wmode, "push", None, "agent_scope", path, push)
@@ -674,20 +797,17 @@ ALLOWED_WRITE_PREFIXES = ("analyst/attempts/", "analyst/calls/", "analyst/lesson
                           "analyst/canary/")
 
 
-def run_merge(ws, api, now, run_info, event, sleep=lambda s: None, dispatch_track=True):
-    """One analyst-merge run. event = {ref, before, after} of the triggering push."""
-    m = Merge(ws, api, now, run_info, sleep=sleep)
+def run_merge(ws, api, now, run_info, inbox=None, sleep=lambda s: None, dispatch=True, log=lambda s: None):
+    """One analyst-merge run (R-AN-32, §16.18 A6): the complete read of the inbox's activity (a failed read raises
+    ActivityReadFailed before anything is written), the completion of comments without files, the closer (every
+    unwitnessed push first, then the windows and the revision bookkeeping), one commit to main, and, only when that
+    commit reached main, the dispatches. `inbox` defaults to `api` (a test double serving both)."""
+    m = Merge(ws, api, now, run_info, sleep=sleep, inbox=api if inbox is None else inbox, log=log)
+    m.read_inbox()
     m.complete_from_comments()
-    m.closer(skip_after=event.get("after"))
-    w = None
-    if event.get("after") and event["after"] != ZERO40:
-        w = m.process_push(event["ref"], event.get("before"), event["after"])
-    subject = "analyst-merge " + (f"{w['kind']} {w.get('id') or '-'} seq {w['seq']}" if w else "closer")
-    ws.commit_push(subject, ALLOWED_WRITE_PREFIXES, sleep=sleep)
-    if dispatch_track:
-        for cid in m.tracks:
-            try:
-                api.dispatch("analyst-track.yml", "main", {"call_id": cid})
-            except Exception:  # noqa: BLE001 - the tracker is display only
-                pass
+    m.closer()
+    seqs = sorted(m.seqs)
+    subject = f"analyst-merge seq {seqs[0]}-{seqs[-1]}" if seqs else "analyst-merge closer"
+    if ws.commit_push(subject, ALLOWED_WRITE_PREFIXES, sleep=sleep) and dispatch:
+        m.dispatch_after_commit()
     return m

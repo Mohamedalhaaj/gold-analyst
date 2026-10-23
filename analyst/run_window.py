@@ -1,4 +1,4 @@
-"""The routine's only entry point (prereg R1; register R-AN-24..R-AN-31, R-AN-48, R-AN-49). FROZEN.
+"""The routine's only entry point (prereg R1; register R-AN-24..R-AN-31, R-AN-48, R-AN-49, R-AN-84). FROZEN.
 
   python3 analyst/run_window.py start                 # push the attempt record, or refuse (prints the enum)
   python3 analyst/run_window.py context               # build the context; a no_call context is locked at once
@@ -7,9 +7,11 @@
   python3 analyst/run_window.py lesson-start | lesson-lock LESSON.json
   python3 analyst/run_window.py revision-start | revision-lock PLAYBOOK.md
   python3 analyst/run_window.py lock --exam PLAN.json # the exam session (gold-analyst-exam)
+  python3 analyst/run_window.py probe                 # the session probes, no window (exit 0 pass, 4 fail,
+                                                      # 5 incomplete, 1 a technical failure)
 
-Canary mode is read from analyst/MODE.json at origin/main; the same commands then write under analyst/canary/.
-Only enums, ids, hashes and paths are printed.
+origin is the agent inbox (gold-analyst-inbox, register §16.18 A6). Canary mode is read from analyst/MODE.json at
+origin/main; the same commands then write under analyst/canary/. Only enums, ids, hashes and paths are printed.
 """
 import argparse
 import sys
@@ -37,6 +39,7 @@ def main(argv=None):
     sub.add_parser("revision-start")
     rl = sub.add_parser("revision-lock")
     rl.add_argument("playbook")
+    sub.add_parser("probe")
     a = ap.parse_args(argv)
     repo = HERE.parent
     if a.cmd == "lock" and a.exam:
@@ -61,6 +64,8 @@ def main(argv=None):
         return s.revision_start()
     if a.cmd == "revision-lock":
         return s.revision_lock(a.playbook)
+    if a.cmd == "probe":
+        return s.probe()
     return 1
 
 

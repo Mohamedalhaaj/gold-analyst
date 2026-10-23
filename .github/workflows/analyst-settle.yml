@@ -1,7 +1,9 @@
-# analyst-settle (prereg §4, §6, §9; register R-AN-39, R-AN-40): the closer, settlement on the mirrored system
-# store in window order, the twins, the state latches, STATE.json and ledger.csv. Script only, no model.
+# analyst-settle (prereg §4, §6, §9; register R-AN-39, R-AN-40, §16.18 A6): the closer, settlement on the mirrored
+# system store in window order, the twins, the state latches, STATE.json and ledger.csv. Script only, no model.
 # It starts on the mirror push (the export job in gold-forward-watch pushes mirror/** with its own deploy key),
-# on a daily backstop and by hand. No secrets.
+# on a daily backstop and by hand. Its closer reads the agent inbox's activity in full first, or stops before
+# writing anything. After a commit it dispatches analyst-track (a buy or sell lock its closer witnessed) and
+# analyst-deploy. No secrets.
 name: analyst-settle
 
 on:
@@ -19,13 +21,17 @@ concurrency:
 permissions:
   contents: write
   issues: write
-  actions: read
+  actions: write
 
 jobs:
   settle:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - name: Run guard (main only)
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then echo "guard: not refs/heads/main"; exit 1; fi
+
       - uses: actions/checkout@v4
         with:
           ref: main

@@ -1,5 +1,8 @@
 """One analyst-settle run: the closer, settlement in window order, the state, the ledger (prereg §4, §6, §9;
-register R-AN-39, R-AN-40, R-AN-56, R-AN-58, R-AN-70). FROZEN."""
+register R-AN-39, R-AN-40, R-AN-56, R-AN-58, R-AN-70, §16.18 A6). FROZEN.
+
+The closer runs first, so the run starts with the complete read of the inbox's activity: a failed read stops it before
+any witness, terminal, revision or settlement record (R-AN-39, R-AN-40); settlement waits for the next settle run."""
 import json
 import urllib.request
 
@@ -63,10 +66,14 @@ def settle_windows(ws, now, run_id, head_sha):
     return done
 
 
-def run_settle(ws, api, now_fn, run_info, verdict=None, sleep=lambda s: None):
-    """now_fn: a callable returning the run's aware UTC time (R-C5: taken once for the records)."""
+def run_settle(ws, api, now_fn, run_info, verdict=None, sleep=lambda s: None, inbox=None, log=lambda s: None,
+               dispatch=True):
+    """now_fn: a callable returning the run's aware UTC time (R-C5: taken once for the records). `inbox` defaults
+    to `api` (a test double serving both). After its commit reached main, the run dispatches analyst-track for each
+    buy/sell lock its closer witnessed, then analyst-deploy once (R-AN-40)."""
     t0 = now_fn()
-    m = Merge(ws, api, lambda: t0, run_info, sleep=sleep)
+    m = Merge(ws, api, lambda: t0, run_info, sleep=sleep, inbox=api if inbox is None else inbox, log=log)
+    m.read_inbox()
     m.complete_from_comments()
     m.closer()
     now = t0
@@ -79,5 +86,7 @@ def run_settle(ws, api, now_fn, run_info, verdict=None, sleep=lambda s: None):
     st = state.run_state(ws.view, full, now, run_info.get("id"), head, verdict, ws.write)
     ws.write(paths.STATE_PATH, rec.record_bytes(st))
     ws.write(paths.LEDGER_PATH, state.ledger_csv(ws.view, now))
-    ws.commit_push(f"analyst-settle {rec.iso(now)[:16]}Z", SETTLE_WRITE_PREFIXES, sleep=sleep, modifiable=SNAPSHOTS)
+    if ws.commit_push(f"analyst-settle {rec.iso(now)[:16]}Z", SETTLE_WRITE_PREFIXES, sleep=sleep,
+                      modifiable=SNAPSHOTS) and dispatch:
+        m.dispatch_after_commit()
     return st, done

@@ -1,12 +1,18 @@
-# analyst-merge (ANALYST_V1_PREREG.md §3 Lock evidence, R1(c); register R-AN-32..R-AN-39). Script only, no model.
-# It runs MAIN's code: the checkout is main, and the pushed commit is fetched only as data (diff and show).
-# It posts the witness comment on the pinned issue, copies the one allowed file byte for byte, writes the terminal
-# record and the chain, runs the closer, and dispatches analyst-track after a buy or sell lock. No secrets.
+# analyst-merge (ANALYST_V1_PREREG.md §3 Lock evidence, R1(c); register R-AN-32..R-AN-39, §16.18 A6). Script only,
+# no model. Sessions push to the agent inbox (Mohamedalhaaj/gold-analyst-inbox), never here, so nothing triggers on a
+# push: this workflow polls on a schedule and runs by hand, always with MAIN's workflow file and code. It reads the
+# inbox's activity in full (or stops before writing anything), fetches each pushed commit from the public inbox only
+# as data (diff and show), posts the witness comment on the pinned issue, copies the one allowed file byte for byte,
+# writes the terminal record and the chain, runs the closer, and after a commit dispatches analyst-track (a buy or
+# sell lock) and analyst-deploy. No secrets.
 name: analyst-merge
 
 on:
-  push:
-    branches: ["claude/analyst-**"]
+  schedule:
+    - cron: "*/5 6-8,12-14 * * 1-5"      # both windows' spans, deadlines and closer times, every clock regime
+    - cron: "*/10 16-17 * * 2-6"         # the lesson routine (16:40)
+    - cron: "*/10 18-19,22-23 * * 6"     # the revision fires (18:00, 22:00)
+    - cron: "33 * * * *"                 # the hourly backstop
   workflow_dispatch:
 
 concurrency:
@@ -21,8 +27,16 @@ permissions:
 jobs:
   merge:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
+      - name: Run guard (main's code, schedule or dispatch only)
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then echo "guard: not refs/heads/main"; exit 1; fi
+          case "$GITHUB_EVENT_NAME" in
+            schedule|workflow_dispatch) ;;
+            *) echo "guard: event $GITHUB_EVENT_NAME"; exit 1 ;;
+          esac
+
       - uses: actions/checkout@v4
         with:
           ref: main
@@ -33,7 +47,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Merge (closer, allowlist, witness, chain)
+      - name: Merge (inbox activity, closer, allowlist, witness, chain)
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python -I analyst/jobs/merge_job.py
