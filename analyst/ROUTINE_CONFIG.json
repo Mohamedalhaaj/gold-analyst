@@ -1,0 +1,323 @@
+{
+ "exported_utc": "2026-10-23T08:52:00Z",
+ "note": "First export, right after the routines were created (register R-AN-61). raw = the RemoteTrigger response fields that define the routine; the creator's account fields are left out. Connectors: none (claude.ai attached every account connector by default at creation; they were cleared before any fire).",
+ "routines": [
+  {
+   "allowed_tools": [
+    "Bash",
+    "Read",
+    "Write"
+   ],
+   "crons": [
+    "20 6,7 * * 1-5"
+   ],
+   "effort": null,
+   "enabled": true,
+   "environment": {
+    "id": "env_01REwcJo2NSGXn64reopcvds",
+    "name": "gold-analyst",
+    "secrets": "none",
+    "setup": "none"
+   },
+   "model": "claude-opus-5-5",
+   "name": "analyst-w1",
+   "network": {
+    "allow": [
+     "the git proxy (default)",
+     "datafeed.dukascopy.com"
+    ],
+    "mode": "limited",
+    "package_managers": "on at export (to be turned off once the canary shows no install is needed)"
+   },
+   "prompt_sha256": "62f959195835d02f77761ea65f941d9e435175ae0ebf240ff7f9eda16d96b0fa",
+   "raw": {
+    "created_at": "2026-10-23T08:50:15.270394Z",
+    "created_via": "http_api",
+    "cron_expression": "20 6,7 * * 1-5",
+    "enabled": true,
+    "enabled_plugins": [],
+    "ended_reason": "",
+    "id": "trig_01VcWkaMs4sHRnwM9TRNqw3s",
+    "job_config": {
+     "ccr": {
+      "environment_id": "env_01REwcJo2NSGXn64reopcvds",
+      "events": [
+       {
+        "data": {
+         "message": {
+          "content": "Follow the section CALL of analyst/ROUTINE_PROMPT.md exactly.",
+          "role": "user"
+         },
+         "parent_tool_use_id": null,
+         "session_id": "",
+         "type": "user",
+         "uuid": "b6d3f2f8-df23-4085-b6d1-f1d7216528f3"
+        }
+       }
+      ],
+      "session_context": {
+       "allowed_tools": [
+        "Bash",
+        "Read",
+        "Write"
+       ],
+       "model": "claude-opus-5-5",
+       "sources": [
+        {
+         "git_repository": {
+          "url": "https://github.com/Mohamedalhaaj/gold-analyst"
+         }
+        }
+       ]
+      }
+     }
+    },
+    "mcp_connections": [],
+    "name": "analyst-w1",
+    "persist_session": false,
+    "suspension_reason": "",
+    "updated_at": "2026-10-23T08:50:21.385601Z"
+   },
+   "repo": "Mohamedalhaaj/gold-analyst",
+   "trigger_id": "trig_01VcWkaMs4sHRnwM9TRNqw3s"
+  },
+  {
+   "allowed_tools": [
+    "Bash",
+    "Read",
+    "Write"
+   ],
+   "crons": [
+    "50 12,13 * * 1-5"
+   ],
+   "effort": null,
+   "enabled": true,
+   "environment": {
+    "id": "env_01REwcJo2NSGXn64reopcvds",
+    "name": "gold-analyst",
+    "secrets": "none",
+    "setup": "none"
+   },
+   "model": "claude-opus-5-5",
+   "name": "analyst-w2",
+   "network": {
+    "allow": [
+     "the git proxy (default)",
+     "datafeed.dukascopy.com"
+    ],
+    "mode": "limited",
+    "package_managers": "on at export (to be turned off once the canary shows no install is needed)"
+   },
+   "prompt_sha256": "62f959195835d02f77761ea65f941d9e435175ae0ebf240ff7f9eda16d96b0fa",
+   "raw": {
+    "created_at": "2026-10-23T08:50:27.904632Z",
+    "created_via": "http_api",
+    "cron_expression": "50 12,13 * * 1-5",
+    "enabled": true,
+    "enabled_plugins": [],
+    "ended_reason": "",
+    "id": "trig_01RHb8M3VHaSk34Zsw42tQSf",
+    "job_config": {
+     "ccr": {
+      "environment_id": "env_01REwcJo2NSGXn64reopcvds",
+      "events": [
+       {
+        "data": {
+         "message": {
+          "content": "Follow the section CALL of analyst/ROUTINE_PROMPT.md exactly.",
+          "role": "user"
+         },
+         "parent_tool_use_id": null,
+         "session_id": "",
+         "type": "user",
+         "uuid": "a2fad526-5df8-43ae-929f-6aa88832a603"
+        }
+       }
+      ],
+      "session_context": {
+       "allowed_tools": [
+        "Bash",
+        "Read",
+        "Write"
+       ],
+       "model": "claude-opus-5-5",
+       "sources": [
+        {
+         "git_repository": {
+          "url": "https://github.com/Mohamedalhaaj/gold-analyst"
+         }
+        }
+       ]
+      }
+     }
+    },
+    "mcp_connections": [],
+    "name": "analyst-w2",
+    "persist_session": false,
+    "suspension_reason": "",
+    "updated_at": "2026-10-23T08:50:44.410264Z"
+   },
+   "repo": "Mohamedalhaaj/gold-analyst",
+   "trigger_id": "trig_01RHb8M3VHaSk34Zsw42tQSf"
+  },
+  {
+   "allowed_tools": [
+    "Bash",
+    "Read",
+    "Write"
+   ],
+   "crons": [
+    "40 16 * * 2-6"
+   ],
+   "effort": null,
+   "enabled": true,
+   "environment": {
+    "id": "env_01REwcJo2NSGXn64reopcvds",
+    "name": "gold-analyst",
+    "secrets": "none",
+    "setup": "none"
+   },
+   "model": "claude-opus-5-5",
+   "name": "analyst-lesson",
+   "network": {
+    "allow": [
+     "the git proxy (default)",
+     "datafeed.dukascopy.com"
+    ],
+    "mode": "limited",
+    "package_managers": "on at export (to be turned off once the canary shows no install is needed)"
+   },
+   "prompt_sha256": "c6a6117a55233088c6c155c6249a3f1da32d555c8d9bedd1bf0ba155502c4a3f",
+   "raw": {
+    "created_at": "2026-10-23T08:50:29.929201Z",
+    "created_via": "http_api",
+    "cron_expression": "40 16 * * 2-6",
+    "enabled": true,
+    "enabled_plugins": [],
+    "ended_reason": "",
+    "id": "trig_0118q3k77T6VWPoHa1g4k3PG",
+    "job_config": {
+     "ccr": {
+      "environment_id": "env_01REwcJo2NSGXn64reopcvds",
+      "events": [
+       {
+        "data": {
+         "message": {
+          "content": "Follow the section LESSON of analyst/ROUTINE_PROMPT.md exactly.",
+          "role": "user"
+         },
+         "parent_tool_use_id": null,
+         "session_id": "",
+         "type": "user",
+         "uuid": "27448fdc-84fd-43e4-af2e-354eec6164cb"
+        }
+       }
+      ],
+      "session_context": {
+       "allowed_tools": [
+        "Bash",
+        "Read",
+        "Write"
+       ],
+       "model": "claude-opus-5-5",
+       "sources": [
+        {
+         "git_repository": {
+          "url": "https://github.com/Mohamedalhaaj/gold-analyst"
+         }
+        }
+       ]
+      }
+     }
+    },
+    "mcp_connections": [],
+    "name": "analyst-lesson",
+    "persist_session": false,
+    "suspension_reason": "",
+    "updated_at": "2026-10-23T08:50:44.880513Z"
+   },
+   "repo": "Mohamedalhaaj/gold-analyst",
+   "trigger_id": "trig_0118q3k77T6VWPoHa1g4k3PG"
+  },
+  {
+   "allowed_tools": [
+    "Bash",
+    "Read",
+    "Write"
+   ],
+   "crons": [
+    "0 18,22 * * 6"
+   ],
+   "effort": null,
+   "enabled": true,
+   "environment": {
+    "id": "env_01REwcJo2NSGXn64reopcvds",
+    "name": "gold-analyst",
+    "secrets": "none",
+    "setup": "none"
+   },
+   "model": "claude-opus-5-5",
+   "name": "analyst-revision",
+   "network": {
+    "allow": [
+     "the git proxy (default)",
+     "datafeed.dukascopy.com"
+    ],
+    "mode": "limited",
+    "package_managers": "on at export (to be turned off once the canary shows no install is needed)"
+   },
+   "prompt_sha256": "86805d7facb89d10c5f65693fc9c3cd7f61f8af45f6598f2989acd26c3b35103",
+   "raw": {
+    "created_at": "2026-10-23T08:50:32.161840Z",
+    "created_via": "http_api",
+    "cron_expression": "0 18,22 * * 6",
+    "enabled": true,
+    "enabled_plugins": [],
+    "ended_reason": "",
+    "id": "trig_013J1yEFxaN82wzpuytRpuTw",
+    "job_config": {
+     "ccr": {
+      "environment_id": "env_01REwcJo2NSGXn64reopcvds",
+      "events": [
+       {
+        "data": {
+         "message": {
+          "content": "Follow the section REVISION of analyst/ROUTINE_PROMPT.md exactly.",
+          "role": "user"
+         },
+         "parent_tool_use_id": null,
+         "session_id": "",
+         "type": "user",
+         "uuid": "9a57c60e-a8bc-4b12-b5c6-3d0e559a6c87"
+        }
+       }
+      ],
+      "session_context": {
+       "allowed_tools": [
+        "Bash",
+        "Read",
+        "Write"
+       ],
+       "model": "claude-opus-5-5",
+       "sources": [
+        {
+         "git_repository": {
+          "url": "https://github.com/Mohamedalhaaj/gold-analyst"
+         }
+        }
+       ]
+      }
+     }
+    },
+    "mcp_connections": [],
+    "name": "analyst-revision",
+    "persist_session": false,
+    "suspension_reason": "",
+    "updated_at": "2026-10-23T08:50:45.662367Z"
+   },
+   "repo": "Mohamedalhaaj/gold-analyst",
+   "trigger_id": "trig_013J1yEFxaN82wzpuytRpuTw"
+  }
+ ],
+ "schema": "analyst-routine-config/1"
+}
