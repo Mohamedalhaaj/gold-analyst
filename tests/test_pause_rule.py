@@ -60,6 +60,20 @@ class Book:
         self.view = DictView({paths.MODE_PATH: json.dumps({"mode": mode, "canary_from": canary_from,
                                                            "canary_to": canary_to, "live_from": live_from})})
         self.run_id = 0
+        self.seen = {}                   # the judge's FINDINGS.csv: key -> the asof of the first verdict carrying it
+
+    def with_first_seen(self, v):
+        """The verdict as the judge publishes it since the sixth review of §16.18 A6 (R-AN-70, R6-2): each key with
+        its first-seen time, here the `asof_utc` of the first verdict that carried it (A0 keys and `system_error:`
+        entries have none)."""
+        if not isinstance(v, dict) or "violation_first_seen" in v or not isinstance(v.get("asof_utc"), str) or \
+                not isinstance(v.get("violation_keys"), list):
+            return v
+        for k in v["violation_keys"]:
+            if isinstance(k, str) and not k.startswith(("A0|", "system_error:")):
+                self.seen.setdefault(k, v["asof_utc"])
+        return dict(v, violation_first_seen={k: self.seen[k] for k in v["violation_keys"]
+                                             if isinstance(k, str) and k in self.seen})
 
     def clear(self, utc, key):
         b = (self.view.read("analyst/ADJUDICATIONS.csv") or b"utc,ref,subject,decision,note\n").decode()
@@ -73,7 +87,7 @@ class Book:
         def write(p, b):
             self.view.files[p] = b
             new.append(json.loads(b))
-        st = state.run_state(self.view, [], now, self.run_id, "h", v, write)
+        st = state.run_state(self.view, [], now, self.run_id, "h", self.with_first_seen(v), write)
         self.view.files[paths.STATE_PATH] = rec.record_bytes(st)
         return st, [(e["event"], e["reason"]) for e in new]
 

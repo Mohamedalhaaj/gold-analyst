@@ -196,7 +196,9 @@ def test_judge_violation_pauses_then_retires_on_a_new_key_after_a_clear():
                                                b"2026-11-21T12:30:00Z,pause,judge_violation:A1|x|p|c1,clear,ok\n")
     st, evs = evaluate(view, days, v1, now=dt.datetime(2026, 11, 21, 13, tzinfo=UTC))
     assert st["calls_enabled"] is True
-    st, evs = evaluate(view, days, dict(v1, violation_keys=["A1|x|p|c2"]),
+    # first seen by the judge at 14:00, after the 12:30 clear (sixth review of §16.18 A6, R6-2: by time)
+    st, evs = evaluate(view, days, dict(v1, violation_keys=["A1|x|p|c2"],
+                                        violation_first_seen={"A1|x|p|c2": "2026-11-21T14:00:00Z"}),
                        now=dt.datetime(2026, 11, 21, 14, tzinfo=UTC))
     assert st["state"] == "RETIRED" and any(e["reason"] == "violation" for e in evs)
 
