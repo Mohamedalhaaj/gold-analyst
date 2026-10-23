@@ -91,8 +91,8 @@ def track_block(tr, now, L_min, exit_utc):
     out = [f'<div class="track"><p class="note">متابعة أولية بالساعة تتأخر نحو ساعة عن السوق، وليست سعرًا حيًا</p>',
            f'<div class="row"><span class="k">الحالة الأولية</span><span>{esc(label)}</span></div>',
            f'<div class="row"><span class="k">نتيجة أولية</span><span class="num">{esc(_fmt(r))} R</span></div>',
-           f'<div class="row"><span class="k">آخر تحديث</span><span class="num">'
-           f'{esc(clock.to_server(upd).strftime("%Y-%m-%d %H:%M"))} (توقيت المنصة)</span></div>']
+           f'<div class="row"><span class="k">آخر تحديث (توقيت المنصة)</span><span class="num">'
+           f'{esc(clock.to_server(upd).strftime("%Y-%m-%d %H:%M"))}</span></div>']
     if stale:
         out.append('<p class="warn">المتابعة الأولية متوقفة</p>')
     out.append("</div>")
@@ -181,7 +181,7 @@ def build(view, now, track_dir=None):
               if mode_doc["mode"] == "canary" else "")
     paused = '<p class="warn">متوقف مؤقتًا (PAUSED)</p>' if st.get("paused_display") or (
         st.get("calls_enabled") is False) else ""
-    asof = rec.iso(now)
+    asof = clock.to_server(now).strftime("%Y-%m-%d %H:%M") + " (توقيت المنصة)"
     return PAGE.format(banner=esc(BANNER), canary=canary, paused=paused, body=body, asof=esc(asof),
                        power=esc("بلوغ عتبة الدليل 400 يحتاج ميزة كبيرة جدًا؛ الاعتماد خلال سنة غير مرجّح."))
 
@@ -231,14 +231,15 @@ footer {{ color:var(--muted); font-size:.85em; margin:20px 0; }}
 <h1>المحلل التجريبي للذهب</h1>
 {canary}{paused}
 {body}
-<footer><p>{power}</p><p>آخر بناء للصفحة: <span class="num">{asof}</span></p></footer>
+<footer><p>{power}</p><p>آخر بناء للصفحة: {asof}</p></footer>
 </main>
 <script>
 (function () {{
   "use strict";
   function two(n) {{ return (n < 10 ? "0" : "") + n; }}
-  function fmt(ms) {{ var s = Math.max(0, Math.floor(ms / 1000)); var h = Math.floor(s / 3600);
-    var m = Math.floor((s % 3600) / 60); return h + ":" + two(m) + ":" + two(s % 60); }}
+  function fmt(ms) {{ var s = Math.max(0, Math.floor(ms / 1000)); var d = Math.floor(s / 86400);
+    var h = Math.floor((s % 86400) / 3600); var m = Math.floor((s % 3600) / 60);
+    return (d > 0 ? d + "d " : "") + two(h) + ":" + two(m) + ":" + two(s % 60); }}
   function tick() {{
     var now = Date.now();
     document.querySelectorAll(".card[data-entry]").forEach(function (c) {{

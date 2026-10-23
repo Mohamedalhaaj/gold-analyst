@@ -260,6 +260,7 @@ class Session:
             return 0
         st = self._load_state() or {}
         pushed = st.get("lesson_pushed", {})
+        done = list(st.get("lesson_done", []))          # locked in this session, perhaps not merged yet
         cand = None
         if mode == "canary":
             fx = view.read_json(paths.CANARY_SETTLED_FIXTURE)
@@ -268,7 +269,7 @@ class Session:
             pool = sorted(((p.rsplit("/", 1)[1][:-5], p) for p in view.list("analyst/settled/")
                            if p.endswith(".json")), key=lambda x: clock.window_key(x[0]))
         for cid, p in pool:
-            if view.exists(paths.lesson_path(mode, cid)):
+            if cid in done or view.exists(paths.lesson_path(mode, cid)):
                 continue
             n_acc = len(witness.accepted_attempts(view, mode, f"lesson-{cid}"))
             if max(n_acc, pushed.get(cid, 0)) >= 2:
@@ -296,7 +297,8 @@ class Session:
         self.work.mkdir(parents=True, exist_ok=True)
         (self.work / "lesson_input.json").write_bytes(settled_bytes)
         pb = memory.playbook_in_force(view, self.now().date(), "live")
-        st = {"kind": "lesson", "mode": mode, "call_id": cid, "n": n, "lesson_pushed": pushed, "failures": 0,
+        st = {"kind": "lesson", "mode": mode, "call_id": cid, "n": n, "lesson_pushed": pushed, "lesson_done": done,
+              "failures": 0,
               "repo_head_sha": head, "settled_sha256": rec.sha256_bytes(settled_bytes),
               "playbook_version": pb["version"]}
         self._save_state(st)
@@ -336,6 +338,9 @@ class Session:
         ok = self._push(st["repo_head_sha"], path, rec.record_bytes(doc),
                         f"claude/analyst-{st['mode']}-lesson-{st['call_id']}", self.now() + dt.timedelta(minutes=5),
                         st, "lock_commit")
+        if ok:
+            st["lesson_done"] = sorted(set(st.get("lesson_done", [])) | {st["call_id"]})
+            self._save_state(st)
         self.out(f"lesson_locked {st['call_id']} status={doc['status']}" if ok else "error lesson_push")
         return 0 if ok else 1
 

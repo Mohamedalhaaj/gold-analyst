@@ -353,7 +353,7 @@ class Merge:
         now = self.now()
         # 1. unwitnessed claude/analyst-* pushes of the last 14 days
         try:
-            acts = self.api.activity()
+            acts = self.api.activity(time_period="month")
         except Exception:  # noqa: BLE001
             acts = []
         lim = rec.iso(now - dt.timedelta(days=14))
@@ -368,13 +368,24 @@ class Merge:
             todo.append((rec.normalize_gh(e["timestamp"]), ref, e.get("before"), after))
         for _t, ref, before, after in sorted(todo):
             self.process_push(ref, before, after)
-        # 2. expected windows past deadline + 20 min without a terminal
-        mode = self.mode if self.mode != "off" else paths.mode_period(self.mode_doc)[0]
-        for w in expected_windows(self.mode_doc, mode, now.date()):
-            if now >= w.deadline_utc + GRACE and not self.view.exists(paths.terminal_path(mode, w.call_id)):
-                self.close_window(mode, w)
+        # 2. expected windows past deadline + 20 min without a terminal: the current mode's, and a finished
+        #    canary period's (canary_to set) after the switch to live, so no canary window stays open
+        for mode in self.closing_modes():
+            for w in expected_windows(self.mode_doc, mode, now.date()):
+                if now >= w.deadline_utc + GRACE and not self.view.exists(paths.terminal_path(mode, w.call_id)):
+                    self.close_window(mode, w)
         # 3. revision bookkeeping
-        self.skip_revisions(mode, now)
+        self.skip_revisions(self.mode if self.mode != "off" else paths.mode_period(self.mode_doc)[0], now)
+
+    def closing_modes(self):
+        out = []
+        if self.mode_doc.get("canary_from") and (self.mode == "canary" or self.mode_doc.get("canary_to")):
+            out.append("canary")
+        if self.mode_doc.get("live_from") and self.mode in ("live", "off"):
+            out.append("live")
+        if self.mode == "off" and not out:
+            out.append(paths.mode_period(self.mode_doc)[0])
+        return out
 
     def skip_revisions(self, mode, now):
         _m, a, b = paths.mode_period(self.mode_doc, mode)

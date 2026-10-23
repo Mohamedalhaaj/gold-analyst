@@ -198,7 +198,7 @@ class FakeAPI:
         self.acts.insert(0, {"id": self._id, "ref": ref, "before": before, "after": after,
                              "timestamp": rec.iso(t), "activity_type": typ, "actor": {"login": actor}})
 
-    def activity(self, ref=None):
+    def activity(self, ref=None, time_period=None):
         return [a for a in self.acts if ref is None or a["ref"] == ref]
 
     def run(self, run_id):

@@ -48,10 +48,12 @@ class GitHubAPI:
             url = m.group(1) if m else None
         return out
 
-    def activity(self, ref=None):
+    def activity(self, ref=None, time_period=None):
         q = f"/repos/{self.repo}/activity?per_page=100"
         if ref:
             q += "&ref=" + urllib.request.quote(ref, safe="")
+        if time_period:
+            q += "&time_period=" + time_period
         return self._pages(q)
 
     def run(self, run_id):

@@ -405,6 +405,7 @@ def test_canary_lesson_and_revision(tmp_path):
     lp.write_text(json.dumps({"text_ar": "درس قصير من سجل اصطناعي"}, ensure_ascii=False))
     h.at(2026, 11, 10, 16, 42)
     assert h.run("lesson_lock", str(lp)) == 0
+    assert h.run("lesson_start") == 0 and h.log[-1] == "none"                    # locked here, not merged yet
     h.push_and_merge()
     les = h.main_json("analyst/canary/lessons/2026-10-16_W1.json")
     assert les["status"] == "ok" and les["attempt_n"] == 1
@@ -428,3 +429,18 @@ def test_canary_lesson_and_revision(tmp_path):
     h.at(2026, 11, 22, 0, 1)
     h.merge()
     assert h.main_json("analyst/canary/revisions/2026-W47.json")["status"] == "skipped"
+
+
+def test_switch_to_live_closes_the_finished_canary_and_ignores_deletions(tmp_path):
+    h = Harness(tmp_path, canary_from="2026-11-09")
+    h.world.owner_commit({"analyst/MODE.json": json.dumps({"mode": "live", "canary_from": "2026-11-09",
+                                                           "canary_to": "2026-11-10", "live_from": "2026-11-11"})})
+    h.at(2026, 11, 11, 9, 0)
+    h.merge()
+    canary = sorted(p.rsplit("/", 1)[1] for p in h.world.main_list("analyst/canary/terminal/"))
+    live = sorted(p.rsplit("/", 1)[1] for p in h.world.main_list("analyst/terminal/"))
+    assert canary == ["2026-11-09_W1.json", "2026-11-09_W2.json", "2026-11-10_W1.json", "2026-11-10_W2.json"]
+    assert live == ["2026-11-11_W1.json"]
+    n = len(h.api.issue_comments)
+    h.merge(("refs/heads/claude/analyst-gone", "0" * 40))                     # a branch deletion records nothing
+    assert len(h.api.issue_comments) == n

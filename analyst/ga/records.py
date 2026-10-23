@@ -71,7 +71,7 @@ def call(ctx, ctx_sha, attempt_n, status, plan_obj, plan_sha, failures, playbook
            "detail": ctx["detail"] if status in ("no_call:data", "no_call:d_ref") else None,
            "attempt_n": attempt_n, "decision_utc": ctx["asof_utc"], "context_sha256": ctx_sha, "context": ctx,
            "playbook": playbook, "plan": plan_obj, "plan_sha256": plan_sha,
-           "d_ref": ctx.get("d_ref") if status in ("called", "stay_out") else ctx.get("d_ref"),
+           "d_ref": ctx.get("d_ref"),
            "side": None, "stop_mult": None, "target_mult": None, "S": None, "T": None, "S_dimes": None,
            "T_dimes": None, "lock_validation_failures": failures,
            "request": {"runner": "claude-code-routine", "model_set": pins.get("model"),
