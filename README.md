@@ -1,8 +1,8 @@
 # gold-analyst
 
 A pre-registered paper test of an LLM "analyst" for XAU/USD (xauusd-quant `research/analyst/ANALYST_V1_PREREG.md`,
-DRAFT v0.6, and `research/system/IMPLEMENTATION_REGISTER.md` §16 with its amendment §16.18 A6). It is not advice and
-it never trades. Nobody has shown that the analyst has an edge; the expected result is "not promoted".
+DRAFT v0.6, and `research/system/IMPLEMENTATION_REGISTER.md` §16 with its amendments §16.18 A6 and A7). It is not
+advice and it never trades. Nobody has shown that the analyst has an edge; the expected result is "not promoted".
 
 ## How it runs
 - Two scheduled Claude Code routines (W1 London, W2 New York) run only the frozen scripts named in
@@ -29,6 +29,19 @@ it never trades. Nobody has shown that the analyst has an edge; the expected res
   Arabic page `/analyst/` when merge, settle or track dispatch it after a commit (and once a day).
 - `python3 analyst/run_window.py probe` runs the session probes (register R-AN-84) without a window; canary calls run
   them inside `context`.
+- The session guard (register R-AN-85, §16.18 A7): `.claude/settings.json` runs `.claude/hooks/guard.py` before every
+  tool call of a session (a PreToolUse hook for every tool, `onFailure: block`) and denies WebFetch, WebSearch, Agent
+  and Skill as a second layer. The guard lets through only the nine command lines of `analyst/ROUTINE_PROMPT.md` and
+  `probe`, each exactly as written and run from the repository root, reads inside the repository outside `.git`, and
+  a Write to `.analyst_run/plan.json`, `lesson.json` or `playbook.md`; it refuses everything else (other commands,
+  `gh`, `git`, `curl`, any shell construct, other tools, MCP and GitHub tools, writes to code or configuration) and
+  fails closed. Its files are frozen, and `.claude/` holds nothing else. The probe routine `analyst-probe` follows
+  `analyst/PROBE_SESSION_PROMPT.md` (C20): the probe, two allowed controls, then harmless forbidden steps that the
+  guard must refuse before the canary may start.
+- The run-log scan (register R-AN-86, owner tool): `python3 analyst/jobs/scan_runs.py analyst/runs/<iso_week>.json`
+  (or a C20 record) classifies every tool call of the week's runs with the guard's own rules and prints
+  `<VIOLATION|WARNING> <code> <run_id>#<seq>` lines and `scan <violations> <warnings> <calls>`; exit 3 on any
+  VIOLATION, 1 for a file that breaks the schema (Write and Edit text must be copied as hashes, never as text).
 - `analyst/MODE.json` selects `canary` (records under `analyst/canary/`, never settled or shown), `live` or `off`.
 
 ## Layout
@@ -36,6 +49,9 @@ it never trades. Nobody has shown that the analyst has an edge; the expected res
   only the standard library and `analyst/vendor/` (tzdata 2026.3, the lab's `eproc.py`), so the routine network can
   be `datafeed.dukascopy.com` only with the package managers off.
 - `analyst/FROZEN_ANALYST.sha256`: the frozen set (`python -I analyst/jobs/make_frozen.py`).
+- `.claude/`: the session guard, and nothing else (no CLAUDE.md, AGENTS.md or .mcp.json anywhere). A Claude Code session
+  whose project directory is this repository, a local one included, runs under the guard and can do nothing but the
+  routine's steps: maintain the repository from a session started outside it.
 - `analyst/display/`: the page and the tracker (display only).
 - `mirror/`: inputs copied by a script from the system store (forecast rows of slots 9, 10, 15 and the M1 day files).
 - `tests/`: `uv run --group dev pytest`.
@@ -46,6 +62,7 @@ environment `analyst-pages`, `INBOX_MIRROR_KEY` in the environment `analyst-inbo
 The analyst judge is not here (prereg R1(a), register R-AN-1): it lives in gold-forward-watch (`judge_analyst/`),
 reads this public repository and the inbox as data only, and publishes its verdict at
 `<PINS.judge_site_url>/judge_analyst/analyst_verdict.json`, which `analyst-settle` reads (R-AN-70). A verdict counts
-only when it is at most 48 hours old. From the first canary day on, a violation pauses the calls while the verdict
+only when it is at most 48 hours old and not older than the newest verdict an earlier settle run counted (§16.18 A7:
+an old cached copy changes nothing). From the first canary day on, a violation pauses the calls while the verdict
 carries it; only in the live period can a new integrity violation, after one the owner cleared, retire the analyst
 (R-AN-55). After 48 hours without a fresh verdict the calls pause (`judge_silent`) until the next one.

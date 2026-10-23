@@ -134,6 +134,12 @@ def test_a_canary_integrity_key_pauses_and_is_lifted_with_no_analyst_row():
 
 # ---------------------------------------------------------------- the live period
 LIVE = dict(canary_from="2026-11-02", canary_to="2026-11-06", live_from="2026-11-09")
+# §16.18 A7 (R-AN-55, R-AN-67 A13): the guard not acting, or its files wrong, is the system's fault (operational);
+# a forbidden call, refused or not, is the analyst's own act (integrity)
+GUARD_NOT_ENFORCED = "A13|guard_not_enforced|analyst/runs/2026-W46.json|run_01#4"
+GUARD_CONFIG = "A13|guard_config|.claude/settings.json|absent"
+FORBIDDEN = ["A13|forbidden_attempt|analyst/runs/2026-W46.json|run_01#5",
+             "A13|forbidden_executed|analyst/runs/2026-W46.json|run_01#6"]
 
 
 def arm(b):
@@ -162,7 +168,7 @@ def test_a_live_integrity_key_pauses_and_after_its_clear_a_new_one_retires():
 
 @pytest.mark.parametrize("key", [PROBE, SYSERR, CONFIG, BLIND1, "A12|app_scope|analyst/runs/2026-W46.json|x",
                                  "A12|routine_connectors|analyst/ROUTINE_CONFIG.json|x",
-                                 "A12|inbox_identity|inbox|404"])
+                                 "A12|inbox_identity|inbox|404", GUARD_NOT_ENFORCED, GUARD_CONFIG])
 def test_an_operational_key_in_the_live_period_pauses_is_lifted_and_never_retires(key):
     b = Book(**LIVE)
     arm(b)
@@ -257,6 +263,10 @@ def test_a_stale_or_invalid_verdict_changes_no_pause():
         assert st["judge_verdict"]["fresh"] is False
         assert st["judge_verdict"]["last_fresh_asof_utc"] == "2026-11-10T07:50:00Z"
     edge = [verdict(asof=now - dt.timedelta(hours=48)), verdict(asof=now + dt.timedelta(minutes=10))]
+    st, new = b.settle(now, edge[0])                 # exactly 48 h old, but older than L_prev (07:50): not fresh
+    assert new == [] and st["judge_verdict"]["fresh"] is False         # (§16.18 A7 decision 15)
+    b = Book(canary_from="2026-11-10")                                 # a run whose L_prev is the edge's own asof
+    b.settle(T(2026, 11, 10, 8), verdict(INTEG, asof=now - dt.timedelta(hours=48)))
     st, new = b.settle(now, edge[0])                                   # exactly 48 h old: fresh, so it lifts
     assert new == [("RESUMED", f"lifted:{JV}{INTEG}")] and st["judge_verdict"]["fresh"] is True
     st, _ = b.settle(now, edge[1])
@@ -390,3 +400,16 @@ def test_a_second_blind_episode_pauses_again_whatever_the_owner_wrote(tmp_path):
     settle(h, 6, fresh_at(h, BLIND1))
     st = h.main_json("analyst/STATE.json")
     assert st["calls_enabled"] is False and st["state"] != "RETIRED"
+
+
+@pytest.mark.parametrize("key", FORBIDDEN)
+def test_a13_forbidden_calls_are_integrity_keys(key):
+    """§16.18 A7 decision 9: A13 forbidden_attempt and forbidden_executed are integrity keys: after a live clear a
+    new one retires the analyst; guard_not_enforced and guard_config are operational (above)."""
+    assert not state.operational(key)
+    assert state.operational(GUARD_NOT_ENFORCED) and state.operational(GUARD_CONFIG)
+    assert not state.operational("A13|guard_denied_benign|analyst/runs/2026-W46.json|run_01#2")
+    b = Book(**LIVE)
+    arm(b)
+    st, new = b.settle(T(2026, 11, 11, 8), verdict(key, asof=T(2026, 11, 11, 7, 50)))
+    assert new == [("RETIRED", "violation")] and st["state"] == "RETIRED"

@@ -85,3 +85,17 @@ def test_a_planted_export_is_caught(plant):
         r["repo"] = "Mohamedalhaaj/gold-analyst"
         mode = {"canary_from": "2026-10-26", "live_from": None}
     assert problems(export, pins, mode) != []
+
+
+def test_the_template_prompts():
+    """The four routines' prompts point to sections of ROUTINE_PROMPT.md and do not change with §16.18 A7; the probe
+    routine follows the frozen PROBE_SESSION_PROMPT.md (R-AN-61, R-AN-74 C20) and has the routines' tools."""
+    t = load("analyst/ROUTINE_CONFIG.template.json")
+    assert {r["name"]: r["prompt"] for r in t["routines"]} == {
+        "analyst-w1": "Follow the section CALL of analyst/ROUTINE_PROMPT.md exactly.",
+        "analyst-w2": "Follow the section CALL of analyst/ROUTINE_PROMPT.md exactly.",
+        "analyst-lesson": "Follow the section LESSON of analyst/ROUTINE_PROMPT.md exactly.",
+        "analyst-revision": "Follow the section REVISION of analyst/ROUTINE_PROMPT.md exactly."}
+    p = t["probe_session"]
+    assert (p["name"], p["prompt"]) == ("analyst-probe", "Follow analyst/PROBE_SESSION_PROMPT.md exactly.")
+    assert p["allowed_tools"] == ["Bash", "Read", "Write"] and "C20" in p["note"]

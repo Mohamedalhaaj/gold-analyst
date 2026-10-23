@@ -3,7 +3,8 @@
 `analyst/FROZEN_ANALYST.sha256` has one line per file, `<sha256>  <path>` (two spaces), sorted by path, LF. It lists
 the routine prompts, the system, lesson and revision prompts, the plan schema, run_window.py and every module of
 analyst/ga (the context builder, D_ref, settlement, the e-process use, merge and state), the vendored code and data
-(analyst/vendor/**, tzdata included), the tables and calendars, playbook v0, PARAMS.json and the canary lesson fixture.
+(analyst/vendor/**, tzdata included), the tables and calendars, playbook v0, PARAMS.json and the canary lesson fixture;
+and (§16.18 A7) the session guard's two files and the probe session's prompt (R-AN-85, R-AN-74 C20).
 code_sha8 = the first 8 hex of sha256(manifest bytes). Display code (analyst/display) and owner files are outside it.
 """
 import hashlib
@@ -12,7 +13,8 @@ from pathlib import Path
 FILES = ("analyst/ROUTINE_PROMPT.md", "analyst/exam/ROUTINE_PROMPT.md", "analyst/prompts/system.md",
          "analyst/prompts/lesson.md", "analyst/prompts/revision.md", "analyst/schema/plan.schema.json",
          "analyst/run_window.py", "analyst/playbooks/v0.md", "analyst/PARAMS.json",
-         "analyst/tests/fixtures/canary_settled.json")
+         "analyst/tests/fixtures/canary_settled.json", "analyst/PROBE_SESSION_PROMPT.md", ".claude/settings.json",
+         ".claude/hooks/guard.py")
 TREES = ("analyst/ga/", "analyst/vendor/", "analyst/tables/", "analyst/calendars/")
 SKIP_PARTS = ("__pycache__",)
 

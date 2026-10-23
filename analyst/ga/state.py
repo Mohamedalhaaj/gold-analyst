@@ -7,11 +7,15 @@ demoted (>= 5 weekdays after the demotion) or violation. Events are create-only 
 The pause rule (R-AN-55 as amended in the fourth and sixth reviews of §16.18 A6, J-4, N2 and R6-2), once per
 settle run:
 - the judge's verdict counts only when fresh (R-AN-70): valid, with asof_utc no more than 48 h before the run and no
-  more than 10 min after it. Otherwise P7 is false and the verdict opens, lifts and retires nothing;
+  more than 10 min after it, and (§16.18 A7 decision 15) not earlier than L_prev, the last_fresh_asof_utc of
+  STATE.json at the start of the run: an older verdict served after a newer one (a stale cache, an old deploy) is
+  not fresh, so last_fresh_asof_utc never decreases. Otherwise P7 is false and the verdict opens, lifts and retires
+  nothing;
 - before P0 (00:00Z of the earliest set date of canary_from and live_from) the verdict makes no event at all;
 - operational keys (A0, system_error:, A12 probe_failed / app_scope / routine_connectors / inbox_identity /
-  inbox_config) and every key before LS (00:00Z of live_from) are mirrored: paused while a fresh verdict carries
-  them, lifted (`lifted:`) when it does not, never cleared by an analyst-side row and never a cause of retirement;
+  inbox_config, A13 guard_not_enforced / guard_config) and every key before LS (00:00Z of live_from) are mirrored:
+  paused while a fresh verdict carries them, lifted (`lifted:`) when it does not, never cleared by an analyst-side
+  row and never a cause of retirement;
 - a live integrity key pauses until an analyst-side clear dated at or after its PAUSED event; a new live integrity
   key after such a clear retires the analyst, "after" by time (sixth review, R6-2): the key's first-seen time in the
   verdict (`violation_first_seen`, the judge's FINDINGS.csv) is later than A, the earliest clear time of a cleared
@@ -43,6 +47,7 @@ SILENT_AFTER = dt.timedelta(hours=48)       # judge_silent: no fresh verdict for
 JUDGE = "judge_violation:"
 JUDGE_SILENT = "judge_silent"
 OPERATIONAL_A12 = ("probe_failed", "app_scope", "routine_connectors", "inbox_identity", "inbox_config")
+OPERATIONAL_A13 = ("guard_not_enforced", "guard_config")    # the session guard not acting, or its files (§16.18 A7)
 LEDGER_COLS = ["call_id", "model_day", "window", "class", "terminal_status", "status", "detail", "action", "side",
                "stop_mult", "target_mult", "confidence", "D_ref", "S", "T", "lock_utc", "attempts", "entry_utc",
                "exit_utc", "P_e", "X", "Tg", "exit_minute_utc", "P_x", "reason", "fill", "gross_usd", "cost_usd",
@@ -121,9 +126,11 @@ def _parse(s):
         return None
 
 
-def fresh_verdict(verdict, now):
+def fresh_verdict(verdict, now, last_fresh=None):
     """The verdict when it is fresh (R-AN-70, §16.18 A6 fourth review, N2), else None: schema analyst-verdict/1, a
-    known analyst_verdict, violation_keys a list of strings, and asof_utc an R-C4 time in [now - 48 h, now + 10 min]."""
+    known analyst_verdict, violation_keys a list of strings, and asof_utc an R-C4 time in [now - 48 h, now + 10 min]
+    and (§16.18 A7 decision 15) not earlier than `last_fresh`, L_prev: the asof of the newest fresh verdict an earlier
+    run fetched (no condition while it is None). The same verdict fetched again stays fresh."""
     if not isinstance(verdict, dict) or verdict.get("schema") != VERDICT_SCHEMA \
             or verdict.get("analyst_verdict") not in VERDICT_VALUES:
         return None
@@ -132,6 +139,8 @@ def fresh_verdict(verdict, now):
         return None
     t = _parse(verdict.get("asof_utc"))
     if t is None or not now - FRESH_BEFORE <= t <= now + FRESH_AFTER:
+        return None
+    if last_fresh is not None and t < last_fresh:
         return None
     return verdict
 
@@ -154,11 +163,14 @@ def first_seen_times(verdict):
 
 def operational(key):
     """An operational VIOLATION key (R-AN-55, R-AN-67): the judge cannot see, a system error, the sandbox leaked, or
-    the owner's own configuration. It pauses while the verdict carries it and never retires the analyst."""
+    the owner's own configuration; since §16.18 A7 also the session guard not acting or its files wrong (A13
+    guard_not_enforced, guard_config). It pauses while the verdict carries it and never retires the analyst. A13
+    forbidden_attempt and forbidden_executed are integrity keys."""
     if key.startswith(("A0|", "system_error:")):
         return True
     parts = key.split("|")
-    return len(parts) >= 2 and parts[0] == "A12" and parts[1] in OPERATIONAL_A12
+    return len(parts) >= 2 and ((parts[0] == "A12" and parts[1] in OPERATIONAL_A12)
+                                or (parts[0] == "A13" and parts[1] in OPERATIONAL_A13))
 
 
 def period_starts(mode_doc):
@@ -273,9 +285,9 @@ def run_state(view, processed_days, now, run_id, head_sha, verdict, write):
     upto = max(processed_days) if processed_days else now.date()
     rows, first_day = collect(view, upto, overlays)
     p0, ls = period_starts(paths.read_mode(view))
-    fresh = fresh_verdict(verdict, now)
     prev_jv = (view.read_json(paths.STATE_PATH) or {}).get("judge_verdict") or {}
-    last_fresh = _parse(prev_jv.get("last_fresh_asof_utc"))
+    last_fresh = _parse(prev_jv.get("last_fresh_asof_utc"))      # L_prev: STATE.json at the start of the run
+    fresh = fresh_verdict(verdict, now, last_fresh)             # an older verdict is not fresh (§16.18 A7, d. 15)
     if fresh is not None:
         t = _parse(fresh["asof_utc"])
         last_fresh = t if last_fresh is None else max(last_fresh, t)

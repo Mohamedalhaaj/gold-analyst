@@ -27,10 +27,34 @@ def sha(p):
     return hashlib.sha256((ROOT / p).read_bytes()).hexdigest()
 
 
+AGENT_FILES = ("CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", ".mcp.json")
+GUARD_FILES = {".claude/settings.json", ".claude/hooks/guard.py"}
+
+
+def _tracked():
+    import subprocess
+    return subprocess.run(["git", "-C", str(ROOT), "ls-files"], capture_output=True, text=True,
+                          check=True).stdout.splitlines()
+
+
 def test_no_agent_instruction_files():
+    """R1(a), R-AN-2 as replaced by §16.18 A7: a one-repository cloud session loads CLAUDE.md, CLAUDE.local.md,
+    AGENTS.md and .mcp.json, so none may exist anywhere; `.claude/` exists only at the root (the session guard)."""
     bad = [p for p in ROOT.rglob("*") if ".venv" not in p.parts and ".git" not in p.parts
-           and (p.name in ("CLAUDE.md", "AGENTS.md") or p.name == ".claude")]
+           and (p.name in AGENT_FILES or (p.name == ".claude" and p != ROOT / ".claude"))]
     assert bad == []
+    for p in _tracked():
+        parts = p.split("/")
+        assert parts[-1] not in AGENT_FILES and ".claude" not in parts[1:], p
+
+
+def test_dot_claude_holds_only_the_guard():
+    """R-AN-2 (§16.18 A7): `.claude/` holds exactly settings.json and hooks/guard.py: no settings.local.json, skills,
+    agents, commands or rules. Bytecode caches are never written there (tests load the guard without them)."""
+    files = {p.relative_to(ROOT).as_posix() for p in (ROOT / ".claude").rglob("*") if not p.is_dir()}
+    dirs = {p.relative_to(ROOT).as_posix() for p in (ROOT / ".claude").rglob("*") if p.is_dir()}
+    assert files == GUARD_FILES and dirs == {".claude/hooks"}
+    assert {p for p in _tracked() if p.startswith(".claude/")} <= GUARD_FILES
 
 
 def test_no_judge_and_no_reports_here():
@@ -95,7 +119,8 @@ def test_manifest_lists_the_frozen_set():
                  "analyst/prompts/revision.md", "analyst/schema/plan.schema.json", "analyst/run_window.py",
                  "analyst/ga/context.py", "analyst/ga/dref.py", "analyst/ga/settle.py", "analyst/vendor/eproc.py",
                  "analyst/vendor/tzdata/__init__.py", "analyst/tables/holidays.csv", "analyst/playbooks/v0.md",
-                 "analyst/PARAMS.json", "analyst/calendars/bls_2026_2027.csv"):
+                 "analyst/PARAMS.json", "analyst/calendars/bls_2026_2027.csv", ".claude/settings.json",
+                 ".claude/hooks/guard.py", "analyst/PROBE_SESSION_PROMPT.md"):
         assert need in paths
     assert not any(p.startswith("analyst/display/") for p in paths)
 
