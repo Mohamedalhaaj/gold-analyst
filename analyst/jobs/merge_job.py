@@ -1,6 +1,6 @@
 """analyst-merge entry point (workflow .github/workflows/analyst-merge.yml; register R-AN-32, §16.18 A6). Runs main's
 code on a schedule or by hand; the pushed commits are fetched from the agent inbox as data only. Prints only kinds,
-ids, seqs and enums (`activity_read=token|anonymous|failed`)."""
+ids, seqs and enums (`activity_read=token|anonymous|failed`, `inbox_fetch=unreachable`, `stale_window <call_id>`)."""
 import datetime as dt
 import os
 import sys
@@ -33,8 +33,8 @@ def main():
     try:
         m = merge.run_merge(ws, api, lambda: dt.datetime.now(rec.UTC).replace(microsecond=0), run_info,
                             inbox=inbox, sleep=time.sleep, log=print)
-    except ghapi.ActivityReadFailed:
-        return 1                                   # nothing was written; the next run retries
+    except (ghapi.ActivityReadFailed, merge.InboxUnavailable):
+        return 1                                   # nothing was committed; the next run retries (R-AN-39, GA-B1)
     for s in m.subjects:
         print(s)
     return 0

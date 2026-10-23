@@ -33,8 +33,8 @@ def main():
     try:
         st, done = settle_run.run_settle(ws, api, lambda: dt.datetime.now(rec.UTC).replace(microsecond=0), run_info,
                                          verdict=verdict, sleep=time.sleep, inbox=inbox, log=print)
-    except ghapi.ActivityReadFailed:
-        return 1                                   # nothing was written; the next settle run retries
+    except (ghapi.ActivityReadFailed, merge.InboxUnavailable):
+        return 1                                   # nothing was committed; the next settle run retries (GA-B1)
     print(f"state {st['state']} n {st['n']} processed {len(done)} calls_enabled {st['calls_enabled']}")
     return 0
 

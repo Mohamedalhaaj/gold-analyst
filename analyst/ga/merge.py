@@ -19,6 +19,17 @@ commit, a fetch beyond its bound, a blob over 4 MiB, a path whose call_id names 
 weekend) and a non-regular file are `agent_scope`; an unexpected failure while an allowed file's content is checked,
 before anything was written or posted, is `invalid_content`; a comment whose agent file cannot be reproduced gets a
 second witness `invalid_content`. Only a failed activity read stops a run, before it writes anything (R-AN-39).
+
+After the second review of §16.18 A6 (GA-B1, SEC-3), a GitHub outage can delay a record but not change it:
+- a pushed commit that cannot be fetched while the inbox does not answer either (a fetch of inbox main fails) is an
+  outage, not the push's fault: InboxUnavailable stops the run before anything is posted for that push or comment, and
+  the next run retries. Only while the inbox answers is an unfetchable commit `agent_scope`;
+- the closer closes only the windows its push range covers: span start >= range_start = max(inbox_from_utc,
+  now - WINDOW_DAYS). The first uncovered open window of a mode stays open (`stale_window`), and with it the mode's
+  later windows (their chain runs through it); a push for an uncovered open window is not processed; a Saturday before
+  range_start is not marked `skipped` (`stale_week`);
+- a window with an accepted call witness and no terminal (a run that failed between the call's witness and the
+  terminal's, or a call whose chain waited) gets that call's own terminal (R-AN-36), never `no_call:run`.
 """
 import datetime as dt
 import re
@@ -39,14 +50,29 @@ CID = r"[0-9]{4}-[0-9]{2}-[0-9]{2}_W[12]"
 HEADER_RE = re.compile(r"^analyst-witness/1 (\S+) (\S+) seq ([0-9]+)$")
 ANALYST_REF = "refs/heads/claude/analyst-"
 SHA_RE = re.compile(r"[0-9a-f]{40}")
-WINDOW_DAYS = 14                     # pushes older than this are not processed (R-AN-32)
+WINDOW_DAYS = 28                     # the push range: pushes older than this are not processed, and a window whose
+                                     # span starts before it is not closed (R-AN-32, R-AN-39); never longer than the
+                                     # activity read's time_period=month, whatever a month GitHub counts
 FETCH_TIMEOUT_S = 180                # per git fetch of a pushed commit (R-AN-32, fetch bound)
 FETCH_TRIES = 3
 FETCH_RETRY_S = 20
+REACH_TIMEOUT_S = 30                 # the fetch of inbox main that tells an outage from an unfetchable commit (GA-B1)
+REACH_TRIES = 3
 MAX_BLOB = 4 * 1024 * 1024           # an allowed blob above this is agent_scope and never read
 NO_AUTH = ("-c", "http.https://github.com/.extraheader=")   # drops the token actions/checkout persisted
+PROTO_V2 = ("-c", "protocol.version=2")   # the server then lists only the ref asked for: no branch flood in the answer
 TERMINAL_STATUSES = ("called", "stay_out", "no_call:refusal", "no_call:invalid", "no_call:data", "no_call:d_ref",
                      "no_call:late", "no_call:run", "missed:trigger", "missed:push", "skipped:holiday")
+
+
+class InboxUnavailable(Exception):
+    """The inbox does not answer git: a GitHub outage. The run stops before anything is posted for the push or the
+    comment at hand, commits nothing and exits 1; the next run retries (R-AN-32, §16.18 A6 second review, GA-B1)."""
+
+
+class StaleWindow(Exception):
+    """A window outside the run's push range cannot be closed (R-AN-39). Raised only if a chain needed one, which the
+    closer's order and the call's chain check prevent."""
 
 
 def patterns(prefix):
@@ -131,25 +157,48 @@ class Workspace:
     def fetch_commit(self, sha, ref=None):
         """Fetch a pushed commit from the inbox, as data and without credentials (R-AN-32): by its sha, else the
         push's ref into refs/analyst-fetch/<sha>. Each git fetch has FETCH_TIMEOUT_S; a failed try is repeated up to
-        FETCH_TRIES times, FETCH_RETRY_S apart. A timeout, or the last failed try, raises: the commit cannot be
-        fetched."""
+        FETCH_TRIES times, FETCH_RETRY_S apart, and a timeout ends the tries. Then the inbox itself is asked
+        (inbox_reachable): if it does not answer, this is an outage and InboxUnavailable is raised (GA-B1); if it
+        answers, the commit cannot be fetched (RuntimeError: the push's `agent_scope`)."""
         if not SHA_RE.fullmatch(sha or "") or not self.inbox_url:
             raise RuntimeError("the pushed commit cannot be fetched")
         if self.has_commit(sha):
             return
         specs = [[sha]] + ([[f"+{ref}:refs/analyst-fetch/{sha}"]] if ref else [])
+        timed_out = False
         for i in range(FETCH_TRIES):
             for spec in specs:
                 try:
                     self.git("fetch", "--quiet", "--no-tags", self.inbox_url, *spec, check=False,
                              timeout=FETCH_TIMEOUT_S, pre=NO_AUTH)
                 except subprocess.TimeoutExpired:
-                    raise RuntimeError("the fetch of the pushed commit timed out") from None
+                    timed_out = True
+                    break
                 if self.has_commit(sha):
                     return
+            if timed_out:
+                break
             if i < FETCH_TRIES - 1:
                 self.sleep(FETCH_RETRY_S)
+        if not self.inbox_reachable():
+            raise InboxUnavailable("the inbox does not answer")
         raise RuntimeError("the pushed commit cannot be fetched")
+
+    def inbox_reachable(self):
+        """True when the inbox answers git: `git fetch <inbox> refs/heads/main` without credentials and over protocol
+        v2, so the server lists that one ref and a branch flood stays out of the answer; REACH_TIMEOUT_S, up to
+        REACH_TRIES tries FETCH_RETRY_S apart. No push can make it fail: only analyst-inbox-mirror moves inbox main
+        (R-AN-83), and its commits are gold-analyst main's, already in this checkout."""
+        for i in range(REACH_TRIES):
+            try:
+                if self.git("fetch", "--quiet", "--no-tags", self.inbox_url, "refs/heads/main", check=False,
+                            timeout=REACH_TIMEOUT_S, pre=NO_AUTH + PROTO_V2).returncode == 0:
+                    return True
+            except subprocess.TimeoutExpired:
+                pass
+            if i < REACH_TRIES - 1:
+                self.sleep(FETCH_RETRY_S)
+        return False
 
     def blob_size(self, sha, path):
         """The size of the blob at `path` in commit `sha` (`git cat-file -s`), or None."""
@@ -216,7 +265,13 @@ class Merge:
         self.pins = paths.read_pins(self.view) or {}
         self.issue = self.pins.get("witness_issue")
         self.inbox_repo = self.pins.get("inbox_repo")
-        self.inbox_from = self.pins.get("inbox_from_utc")
+        raw_from = self.pins.get("inbox_from_utc")
+        try:
+            self.inbox_from = rec.normalize_gh(raw_from) if raw_from else None
+        except (ValueError, TypeError):
+            self.inbox_from = None               # not an ISO time: as unset (nothing processed, nothing closed), logged
+        self.inbox_from_bad = bool(raw_from) and self.inbox_from is None
+        self.range_start = None              # the push range's start, max(inbox_from_utc, now - WINDOW_DAYS); the read
         if ws.inbox_url is None and self.inbox_repo:
             ws.inbox_url = f"https://github.com/{self.inbox_repo}.git"
         self.head_sha = ws.head()
@@ -251,17 +306,22 @@ class Merge:
             raise ActivityReadFailed(type(e).__name__) from None
         self.acts, self.activity_read = acts, how
         self.log(f"activity_read={how}")
-        if not self.inbox_from:
+        if self.inbox_from_bad:
+            self.log("inbox_from_utc=invalid")
+        elif not self.inbox_from:
             self.log("inbox_from_utc=unset")
+        if self.inbox_from:
+            self.range_start = max(self.inbox_from, rec.iso(self.now() - dt.timedelta(days=WINDOW_DAYS)))
         return acts
 
     def pushes_to_process(self):
         """The inbox pushes to witness, in ascending (timestamp, id) order (R-AN-32, R-AN-34): entries whose ref
         starts refs/heads/claude/analyst-, whose after is a commit (not 40 zeros) and whose timestamp is at or after
-        PINS.inbox_from_utc. A sha's entry is its earliest by (timestamp, id); it is processed when that time is
-        within the last WINDOW_DAYS days and no counting witness names the sha. Probe refs (claude/probe-*), main and
-        anything else are never read, so they can neither add a push nor give one an earlier time."""
-        if not self.inbox_from:
+        PINS.inbox_from_utc. A sha's entry is its earliest by (timestamp, id); it is processed when that time is at or
+        after range_start (the last WINDOW_DAYS days) and no counting witness names the sha. Probe refs
+        (claude/probe-*), main and anything else are never read, so they can neither add a push nor give one an
+        earlier time."""
+        if not self.inbox_from or not self.range_start:
             return []
         first = {}
         for e in self.acts or []:
@@ -281,8 +341,8 @@ class Merge:
             key = (t, aid if isinstance(aid, int) and not isinstance(aid, bool) else -1)
             if after not in first or key < first[after][0]:
                 first[after] = (key, e)
-        lim = rec.iso(self.now() - dt.timedelta(days=WINDOW_DAYS))
-        todo = [(key, e) for key, e in first.values() if key[0] >= lim and not self.witnessed_after(e["after"])]
+        todo = [(key, e) for key, e in first.values()
+                if key[0] >= self.range_start and not self.witnessed_after(e["after"])]
         return [e for _key, e in sorted(todo, key=lambda x: x[0])]
 
     # ------------------------------------------------------------ comments, seq
@@ -357,7 +417,8 @@ class Merge:
         yet (a run that failed after posting). A write that cannot be reproduced (the agent's commit can no longer be
         fetched, or its bytes differ) does not stop the run: the witness file is still written from its comment, and
         the push gets a second, rejected witness `invalid_content` naming the missing path (register §16 note of
-        2026-10-23, review blocker B2)."""
+        2026-10-23, review blocker B2). An inbox that does not answer is an outage, not a lost source: InboxUnavailable
+        stops the run before any second witness is posted (GA-B1)."""
         have = set()
         for mode in ("live", "canary"):
             have |= {w.get("seq") for w in witness.witnesses(self.view, mode)}
@@ -374,6 +435,9 @@ class Merge:
                     continue
                 try:
                     data = self._completion_bytes(doc, wr)
+                except InboxUnavailable:          # an outage: nothing is posted, the next run completes (GA-B1)
+                    self.log("inbox_fetch=unreachable")
+                    raise
                 except Exception:  # noqa: BLE001 - an unfetchable or malformed source is logged below
                     data = None
                 if data is None or rec.sha256_bytes(data) != wr["sha256"]:
@@ -504,9 +568,44 @@ class Merge:
             return "calls_disabled:" + ",".join(st.get("pause_reasons") or [])
         return None
 
+    def covered(self, w):
+        """True when the run's push range covers window w: its span start (entry - 45 min) is at or after
+        range_start, so every timely push for w is in the read and has been processed (R-AN-39, SEC-3)."""
+        return bool(self.range_start) and rec.iso(w.span_start_utc) >= self.range_start
+
+    def accepted_call(self, mode, call_id):
+        """The accepted call witness of a window whose call file is on main with the witnessed bytes, or None."""
+        for x in witness.witnesses(self.view, mode):
+            if x.get("kind") == "call" and x.get("status") == "accepted" and x.get("id") == call_id:
+                b = self.view.read(x.get("path") or "")
+                if b is not None and rec.sha256_bytes(b) == x.get("file_sha256"):
+                    return x
+        return None
+
+    def chain_block(self, mode, w):
+        """The first window before w (mode, window order) with no terminal, no accepted call and outside the push
+        range: w's terminal would chain through it (R-AN-37), so it waits. None when the chain is clear."""
+        exp = expected_windows(self.mode_doc, mode, w.day)
+        keys = [x.key() for x in exp]
+        if w.key() not in keys:
+            return None
+        for x in exp[:keys.index(w.key())]:
+            if not self.view.exists(paths.terminal_path(mode, x.call_id)) and not self.covered(x) \
+                    and self.accepted_call(mode, x.call_id) is None:
+                return x
+        return None
+
     def close_window(self, mode, w):
         if self.view.exists(paths.terminal_path(mode, w.call_id)):
             return
+        cw = self.accepted_call(mode, w.call_id)
+        if cw is not None:                         # the call's own terminal (R-AN-36), never no_call:run
+            win = cw.get("window") or {}
+            self._call_terminal(mode, w, rec.loads(self.view.read(cw["path"])), cw["path"], cw["file_sha256"],
+                                cw.get("push"), win.get("time_utc"), win.get("time_source"), cw["seq"])
+            return
+        if not self.covered(w):
+            raise StaleWindow(w.call_id)
         if self.holidays.has_table(w.day) and self.holidays.is_holiday(w):
             self.write_terminal(mode, w, "skipped:holiday", None, "closer")
         elif self.attempts_of(mode, w.call_id):
@@ -523,12 +622,22 @@ class Merge:
             self.read_inbox()
         for e in self.pushes_to_process():
             self.process_push(e)
-        # 2. expected windows past deadline + 20 min without a terminal: the current mode's, and a finished
-        #    canary period's (canary_to set) after the switch to live, so no canary window stays open
+        # 2. expected windows without a terminal, in window order: the current mode's, and a finished canary
+        #    period's (canary_to set) after the switch to live, so no canary window stays open. A window with an
+        #    accepted call witness gets that call's terminal (R-AN-36), past its deadline or not. Any other window
+        #    past deadline + 20 min is closed if the push range covers it; the first one it does not cover stays
+        #    open (`stale_window`), and so do the mode's later windows, whose chain runs through it (SEC-3).
         for mode in self.closing_modes():
             for w in expected_windows(self.mode_doc, mode, now.date()):
-                if now >= w.deadline_utc + GRACE and not self.view.exists(paths.terminal_path(mode, w.call_id)):
-                    self.close_window(mode, w)
+                if self.view.exists(paths.terminal_path(mode, w.call_id)):
+                    continue
+                if self.accepted_call(mode, w.call_id) is None:
+                    if now < w.deadline_utc + GRACE:
+                        continue
+                    if not self.covered(w):
+                        self.log(f"stale_window {w.call_id}")
+                        break
+                self.close_window(mode, w)
         # 3. revision bookkeeping
         self.skip_revisions(self.mode if self.mode != "off" else paths.mode_period(self.mode_doc)[0], now)
 
@@ -553,7 +662,10 @@ class Merge:
                 break
             iw = clock.iso_week(sat)
             p = paths.revision_record_path(mode, iw)
-            if not self.view.exists(p):
+            sat_utc = rec.iso(dt.datetime.combine(sat, dt.time(0), tzinfo=rec.UTC))
+            if not self.view.exists(p) and (not self.range_start or sat_utc < self.range_start):
+                self.log(f"stale_week {iw}")      # its revision pushes may be outside the push range (SEC-3)
+            elif not self.view.exists(p):
                 doc = {"schema": REVISION_SCHEMA, "iso_week": iw, "status": "skipped", "version": None,
                        "playbook_sha256": None, "effective_from": None, "written_utc": rec.iso(now),
                        "writer": "closer"}
@@ -592,7 +704,8 @@ class Merge:
         included), a blob over 4 MiB or a path that is not a regular file is `agent_scope`; an unexpected failure
         while an allowed file's content is checked, before anything was written or posted, is `invalid_content`.
         Failures after a witness comment was posted (the API, the workspace) still raise: the next run completes
-        that comment."""
+        that comment. An inbox that does not answer raises InboxUnavailable before anything is posted (GA-B1). An
+        attempt or a call for an open window outside the push range is not processed (`stale_window`, SEC-3)."""
         ref, before, after = entry.get("ref"), entry.get("before"), entry.get("after")
         if not after or after == ZERO40 or self.witnessed_after(after):
             return None
@@ -603,6 +716,9 @@ class Merge:
         try:
             self.ws.fetch_commit(after, ref)
             entries = self.ws.diff_entries(after)
+        except InboxUnavailable:                  # an outage: nothing is posted for this push (GA-B1)
+            self.log("inbox_fetch=unreachable")
+            raise
         except Exception:  # noqa: BLE001 - checked below: no diff means not exactly one allowed added file
             entries = None
         wmode = self.mode if self.mode in ("live", "canary") else "live"
@@ -637,6 +753,8 @@ class Merge:
         self._acting = False
         try:
             return handler(mode, path, ident, id_, data, sha, push, t_utc, t_src)
+        except StaleWindow:
+            raise
         except Exception:  # noqa: BLE001
             if self._acting:                      # a witness or a file is already out: never contradict it
                 raise
@@ -694,6 +812,8 @@ class Merge:
                       "void": t_utc < rec.iso(w.span_start_utc) or t_utc > rec.iso(w.deadline_utc)}
             if self.view.exists(paths.terminal_path(mode, draw)):
                 return self.reject(mode, "attempt", draw, "window_closed", path, push, window=window)
+            if not self.covered(w):
+                return self._uncovered(w)
             if len(acc) >= 2:
                 return self.reject(mode, "attempt", draw, "attempt_cap", path, push, window=window)
             if n != len(acc) + 1:
@@ -716,8 +836,26 @@ class Merge:
                   "time_source": t_src, "void": False}
         if self.view.exists(paths.terminal_path(mode, cid)):
             return self.reject(mode, "call", cid, "window_closed", path, push, window=window)
+        if not self.covered(w):
+            return self._uncovered(w)
+        block = self.chain_block(mode, w)
         acc_w = self._accept(mode, "call", cid, path, data, sha, push, window)
-        att = [a for a in self.attempts_of(mode, cid) if a["n"] == doc["attempt_n"]]
+        if block is not None:                     # the terminal waits for its chain; the closer writes it (SEC-3)
+            self.log(f"stale_window {block.call_id}")
+            return acc_w
+        self._call_terminal(mode, w, doc, path, sha, push, t_utc, t_src, acc_w["seq"])
+        return acc_w
+
+    def _uncovered(self, w):
+        """A push for an open window outside the push range is not processed: an earlier push of that window may be
+        outside the read (SEC-3). It stays unwitnessed; the window stays open."""
+        self.log(f"stale_window {w.call_id}")
+        return None
+
+    def _call_terminal(self, mode, w, doc, path, sha, push, t_utc, t_src, witness_seq):
+        """The terminal of an accepted call (R-AN-36, in order): late, no attempt, void attempt, underivable, else the
+        call's own status. Written by the run that accepts the call, or by a later run's closer (writer `merge`)."""
+        att = [a for a in self.attempts_of(mode, w.call_id) if a["n"] == doc["attempt_n"]]
         if t_utc > rec.iso(w.deadline_utc):
             status, detail = "no_call:late", None
         elif not att or not (att[0]["time_utc"] < t_utc):
@@ -729,9 +867,8 @@ class Merge:
         else:
             status, detail = doc["status"], doc.get("detail")
         info = {"path": path, "sha256": sha, "plan_status": doc["status"], "lock_utc": t_utc, "time_source": t_src,
-                "push_sha": push["after"], "witness_seq": acc_w["seq"]}
+                "push_sha": (push or {}).get("after"), "witness_seq": witness_seq}
         self.write_terminal(mode, w, status, detail, "merge", call_info=info, push=push)
-        return acc_w
 
     def _settled_exists(self, mode, cid):
         if mode == "canary":

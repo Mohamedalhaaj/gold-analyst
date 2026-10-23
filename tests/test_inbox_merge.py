@@ -5,7 +5,9 @@ R-AN-40, R-AN-75 item 4).
   tries. A failed read stops the run before anything is written, posted, committed or dispatched (review blocker B1).
 - A push's time is its earliest inbox activity entry on a `claude/analyst-*` ref with timestamp >= inbox_from_utc.
 - A pushed commit is fetched from the inbox as data, without gold-analyst's credential, within 180 s and 3 tries; a
-  blob over 4 MiB is never read. Either bound gives `agent_scope`, never a halted run.
+  blob over 4 MiB is never read. Either bound gives `agent_scope`, never a halted run, while the inbox answers (a
+  fetch of its main works); an inbox that does not answer stops the run (tests/test_inbox_outage.py, GA-B1).
+- Pushes older than 28 days are not processed (SEC-3).
 - An edited witness comment counts for nothing except seq.
 - The closer witnesses every listed push before it closes a window.
 - Probe pushes (`claude/probe-*`), however many, are never read.
@@ -236,13 +238,15 @@ def test_entries_before_inbox_from_utc_are_never_processed(tmp_path, inbox_from)
     assert ("inbox_from_utc=unset" in h.merge_log) == (inbox_from is None)
 
 
-def test_entries_older_than_14_days_are_not_processed(tmp_path):
-    h = Harness(tmp_path, canary_from="2026-11-25", slots_until=dt_(2026, 12, 4))
+@pytest.mark.parametrize("now,processed", [((2026, 12, 8, 7, 20, 1), False), ((2026, 12, 8, 7, 20, 0), True)])
+def test_entries_older_than_28_days_are_not_processed(tmp_path, now, processed):
+    """The push range is 28 days (register §16.18 A6 after its second review, SEC-3), inside the month read."""
+    h = Harness(tmp_path, canary_from="2026-12-09", slots_until=dt_(2026, 12, 31))
     sha = h.agent_branch("claude/analyst-old", {CANARY_ATT: attempt_bytes(h)})
     h.api.add_push("refs/heads/claude/analyst-old", "0" * 40, sha, h.at(2026, 11, 10, 7, 20))
-    h.at(2026, 11, 24, 7, 20, 1)
+    h.at(*now)
     h.merge()
-    assert h.api.issue_comments == []
+    assert [w["reason"] for w in h.witnesses()] == (["mode"] if processed else [])
 
 
 def dt_(*a):
@@ -279,8 +283,16 @@ def test_the_fetch_is_from_the_inbox_without_credentials(tmp_path):
     assert f[i + 1:] == ["--quiet", "--no-tags", str(h.world.inbox), h.last_witness()["push"]["after"]]
 
 
+def commit_fetches(cmds):
+    return [c for c in cmds if c[-1] != "refs/heads/main"]
+
+
 def test_a_fetch_timeout_is_agent_scope_without_more_tries(tmp_path):
+    """While the inbox answers (its main can be fetched), a timed-out fetch of the pushed commit is the push's fault
+    (GA-B1: only an inbox that does not answer stops the run)."""
     def timeout(argv, kw):
+        if argv[-1] == "refs/heads/main":
+            return subprocess.run(argv, **kw)
         raise subprocess.TimeoutExpired(argv, kw.get("timeout"))
     h = Harness(tmp_path)
     h.runner = Recorder(fetch=timeout)
@@ -289,11 +301,14 @@ def test_a_fetch_timeout_is_agent_scope_without_more_tries(tmp_path):
     w = h.last_witness()
     assert (w["kind"], w["id"], w["status"], w["reason"], w["path"]) == ("push", None, "rejected", "agent_scope",
                                                                         None)
-    assert len(h.runner.fetches()) == 1 and h.runner.fetches()[0] and h.world.main_file(CANARY_ATT) is None
+    assert len(commit_fetches(h.runner.fetches())) == 1 and h.world.main_file(CANARY_ATT) is None
+    assert [c[-1] for c in h.runner.fetches()].count("refs/heads/main") == 1      # the inbox answered
 
 
 def test_a_failing_fetch_is_tried_3_times_20_s_apart(tmp_path):
     def fail(argv, kw):
+        if argv[-1] == "refs/heads/main":                       # the inbox answers
+            return subprocess.run(argv, **kw)
         return subprocess.CompletedProcess(argv, 1, b"", b"fatal: x")
     h = Harness(tmp_path)
     rec_ = Recorder(fetch=fail)
@@ -303,10 +318,11 @@ def test_a_failing_fetch_is_tried_3_times_20_s_apart(tmp_path):
     ws = merge.Workspace(h.world.clone("m"), runner=rec_, inbox_url=str(h.world.inbox), sleep=sleeps.append)
     merge.run_merge(ws, h.api, h.now, {"workflow": "analyst-merge", "id": 1, "attempt": 1, "event": "schedule"})
     assert sleeps == [20, 20]
-    assert len(rec_.fetches()) == 6                              # 3 tries of (the sha, then the push's ref)
+    assert len(commit_fetches(rec_.fetches())) == 6              # 3 tries of (the sha, then the push's ref)
     assert all(c[c.index("fetch") + 4] in (h.api.acts[0]["after"], f"+{h.api.acts[0]['ref']}:refs/analyst-fetch/"
                                                                    f"{h.api.acts[0]['after']}")
-               for c in rec_.fetches())
+               for c in commit_fetches(rec_.fetches()))
+    assert len(rec_.fetches()) == 7                              # then one fetch of inbox main, which answers
     assert h.last_witness()["reason"] == "agent_scope"
 
 

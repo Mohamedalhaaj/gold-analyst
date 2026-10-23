@@ -11,12 +11,15 @@ it never trades. Nobody has shown that the analyst has an edge; the expected res
 - The routines are attached only to the agent inbox `Mohamedalhaaj/gold-analyst-inbox` (public, GitHub Actions
   disabled, no secret). Its `main` is a fast-forward copy of this repository's main, kept level by
   `analyst-inbox-mirror`; sessions clone it and push only to its `claude/analyst-*` branches. No session can write
-  this repository.
+  this repository. No routine carries a claude.ai connector or plugin (`analyst/ROUTINE_CONFIG.json`, checked by
+  `tests/test_routine_config.py`).
 - `analyst-merge` (script only) runs main's code on a schedule (every 5 minutes around the windows, around the lesson
   and revision routines, and hourly) and by hand. It reads the inbox's activity in full or stops before writing
   anything, fetches each pushed commit from the inbox as data, checks the path allowlist, takes the push's server
   time from the inbox's activity, posts a witness comment on this repository's pinned issue, copies the one allowed
-  file to main, writes the terminal record and the hash chain, and runs the closer.
+  file to main, writes the terminal record and the hash chain, and runs the closer. A GitHub outage delays a record
+  and does not change it: a run that cannot reach the inbox stops and retries, and the closer closes only windows
+  whose pushes are all within its 28-day push range (a longer outage leaves them open for the owner).
 - `analyst-settle` settles on the mirrored Dukascopy M1 store (lab v2's execution rules with the plan's target),
   writes the drift twins, the e-process state (the lab's frozen `eproc.py`, E* = 400) and `analyst/ledger.csv`.
 - `analyst-track` follows an open paper trade hour by hour for display only; `analyst-deploy` builds and deploys the

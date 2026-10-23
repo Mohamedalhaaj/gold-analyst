@@ -2,7 +2,10 @@
 register R-AN-39, R-AN-40, R-AN-56, R-AN-58, R-AN-70, §16.18 A6). FROZEN.
 
 The closer runs first, so the run starts with the complete read of the inbox's activity: a failed read stops it before
-any witness, terminal, revision or settlement record (R-AN-39, R-AN-40); settlement waits for the next settle run."""
+any witness, terminal, revision or settlement record (R-AN-39, R-AN-40); settlement waits for the next settle run.
+Settlement stops, logging `call_file_missing <call_id>`, at a `called` terminal whose call file is not on main (a lock
+whose bytes could not be reproduced, §16.18 A6 second review, GA-B1): it never settles without the call, and never
+fails every later run on it."""
 import json
 import urllib.request
 
@@ -29,7 +32,7 @@ def fetch_verdict(pins, timeout=20):
         return None
 
 
-def settle_windows(ws, now, run_id, head_sha):
+def settle_windows(ws, now, run_id, head_sha, log=lambda s: None):
     """Settle live windows in window order; returns every processed window (earlier runs included)."""
     view = ws.view
     mode_doc = paths.read_mode(view)
@@ -50,6 +53,9 @@ def settle_windows(ws, now, run_id, head_sha):
         if view.exists(paths.twin_path(w.call_id)) and (not need_settle or view.exists(paths.settled_path(w.call_id))):
             done.append(w)
             continue
+        if need_settle and not view.exists(paths.call_path("live", w.call_id)):
+            log(f"call_file_missing {w.call_id}")
+            break
         if not settle.processable(rbk, view, w, now):
             break
         m, _used = store.load_days(view, rbk, settle.day_inputs(rbk, w)[0])
@@ -78,7 +84,7 @@ def run_settle(ws, api, now_fn, run_info, verdict=None, sleep=lambda s: None, in
     m.closer()
     now = t0
     head = m.head_sha
-    done = settle_windows(ws, now, run_info.get("id"), head)
+    done = settle_windows(ws, now, run_info.get("id"), head, log=log)
     ids = {w.call_id for w in done}
     prev = (ws.view.read_json(paths.STATE_PATH) or {}).get("last_processed_day") or ""
     full = [d for d in sorted({w.day for w in done})
