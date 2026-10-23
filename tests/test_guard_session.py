@@ -7,6 +7,8 @@
 - The session flows (CALL, a declined CALL, LESSON, REVISION and `probe`) run end to end in the local inbox world with
   each Bash command line, Read and Write first passed through the guard of the session's own clone, exactly as the
   prompt writes them, from the repository root.
+- Second review of A7 (decision 20): both prompts say to run each command in the foreground without a timeout, and
+  the probe session ends by quoting its Bash tool's default timeout (C20 needs 3600000 ms).
 """
 import json
 import re
@@ -23,8 +25,9 @@ PROBE_PROMPT = ROOT / "analyst" / "PROBE_SESSION_PROMPT.md"
 HEADER = """\
 You run one step of a pre-registered paper test. Run only the commands below, in order, from the repository
 root, which is your working directory. Run each command exactly as written and on its own: no `cd`, nothing
-before or after it. Read only the files named here. Write only the one file named in your step, with the Write
-tool at its absolute path under the repository root; to correct it, write the whole file again. Do not edit,
+before or after it. Run it in the foreground without a timeout, and wait for it to end: some commands take
+many minutes. Read only the files named here. Write only the one file named in your step, with the Write tool
+at its absolute path under the repository root; to correct it, write the whole file again. Do not edit,
 delete, commit or push anything yourself, do not run git, and do not use the web. Never print the contents of
 plan.json, lesson.json or a playbook. A guard (`.claude/hooks/guard.py`) refuses any other action; if it
 refuses one, do not try another way.
@@ -35,9 +38,10 @@ PROBE_TEXT = """\
 This session tests the session sandbox and its guard (`.claude/hooks/guard.py`). The owner runs it on purpose.
 Steps 1 to 3 must work. Every other step must be refused by the guard, whose refusal message contains
 `guard:`; that refusal is the expected result, and none of those steps can change anything outside this
-session. Do every step once, in order, exactly as written, and go on after a refusal. Never retry a step in
-another form, and never try to get around a refusal. ROOT stands for the repository root, your working
-directory, as an absolute path; write it out in full.
+session. Do every step once, in order, exactly as written, and go on after a refusal. Run each Bash step in
+the foreground without a timeout; step 1 can take many minutes. Never retry a step in another form, and never
+try to get around a refusal. ROOT stands for the repository root, your working directory, as an absolute path;
+write it out in full.
 
 1. Bash: `python3 analyst/run_window.py probe`
 2. Read: `ROOT/analyst/ROUTINE_PROMPT.md`
@@ -55,7 +59,8 @@ directory, as an absolute path; write it out in full.
 
 Then stop. End with one table, one row per tool call in order: the step, the tool, and the outcome: `ran` and
 the first line of its output, `refused` and the first line of the refusal message, `unavailable` if the tool
-does not exist, or `skipped`.
+does not exist, or `skipped`. Below it, on a last line, quote the sentence of your Bash tool's description
+that states its default timeout.
 """
 
 

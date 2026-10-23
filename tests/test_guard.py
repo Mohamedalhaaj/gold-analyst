@@ -1,9 +1,11 @@
-"""The session guard's allow/deny matrix (register R-AN-85 "Tests", §16.18 A7 decisions 4, 5 and 7).
+"""The session guard's allow/deny matrix (register R-AN-85 "Tests", §16.18 A7 decisions 4, 5, 7 and 20).
 
 Every case runs twice: in-process on the decision (`check`, the module executed from the copy inside the test root,
 so that its own place is checked), and as a subprocess exactly as Claude Code runs the hook: the command of
 `.claude/settings.json` through /bin/sh, the event on stdin, CLAUDE_PROJECT_DIR in the environment. A refusal must
 print exactly the compact JSON line and the message and exit 2; an allowed call prints nothing and exits 0.
+Second review of A7 (decision 20): a Bash `timeout` below the settings' 3600000 ms is refused `bash_option`, since
+it would let an allowed command move to the background.
 """
 import ast
 import json
@@ -21,7 +23,8 @@ MSG = {
             "another way.",
     "bash_form": "run only the commands written in analyst/ROUTINE_PROMPT.md, each exactly as written and on its "
                  "own: no cd, nothing before or after it. Do not try another way.",
-    "bash_option": "run the command in the foreground, with no option other than a description or a timeout.",
+    "bash_option": "run the command in the foreground, with no option other than a description, and leave out the "
+                   "timeout (one below 3600000 ms is refused).",
     "bash_cwd": "commands run only from the repository root.",
     "read_path": "read only files inside this repository, outside .git, by their absolute paths.",
     "write_path": "write only the one file your step names, .analyst_run/plan.json, .analyst_run/lesson.json or "
@@ -87,8 +90,9 @@ def raw(b):
 ALLOWED = (
     [(f"line:{l[len(B):]}", bash(l)) for l in LINES]
     + [(f"spaces:{l[len(B):]}", bash("  " + l + " ")) for l in LINES]
-    + [("bash_ignored_fields", bash(LINES[0], description="Start the window", timeout=600000,
+    + [("bash_ignored_fields", bash(LINES[0], description="Start the window", timeout=3600000,
                                     run_in_background=False, dangerouslyDisableSandbox=None))]
+    + [(f"timeout_ok:{v!r}", bash(LINES[1], timeout=v)) for v in (None, 3600000, 3600000.0, 7200000)]
     + [(f"read:{p}", read(p)) for p in ("analyst/ROUTINE_PROMPT.md", "analyst/prompts/system.md",
                                          ".analyst_run/context.json", ".claude/settings.json", ".gitignore")]
     + [("read_extra_keys", lambda d: event("Read", {"file_path": f"{d}/analyst/ROUTINE_PROMPT.md", "offset": 1,
@@ -130,6 +134,8 @@ REFUSED = [
     ("no_sandbox", bash(LINES[0], dangerouslyDisableSandbox=True), "bash_option"),
     ("background_zero", bash(LINES[0], run_in_background=0), "bash_option"),
     ("unknown_key", bash(LINES[0], sandbox=False), "bash_option"),
+    *[(f"timeout:{v!r}", bash(LINES[1], timeout=v), "bash_option") for v in (
+        1000, 120000, 600000, 3599999, 3599999.5, 0, -1, True, False, "3600000", [3600000], {"ms": 3600000})],
     ("cwd_other", lambda d: event("Bash", {"command": LINES[0]}, cwd=f"{d}/analyst"), "bash_cwd"),
     ("cwd_missing", lambda d: event("Bash", {"command": LINES[0]}), "bash_cwd"),
     ("cwd_relative", lambda d: event("Bash", {"command": LINES[0]}, cwd="."), "bash_cwd"),
@@ -336,6 +342,8 @@ def test_the_string_rules_need_no_file_system():
     assert g.decide(event("Bash", {"command": LINES[0]}), p, fs=False) is None              # no cwd needed
     assert g.decide(event("Bash", {"command": LINES[0]}), None, fs=False) is None
     assert g.decide(event("Bash", {"command": "git status"}), None, fs=False) == "bash_form"
+    assert g.decide(event("Bash", {"command": LINES[1], "timeout": 1000}), None, fs=False) == "bash_option"
+    assert g.decide(event("Bash", {"command": LINES[1], "timeout": 3600000}), None, fs=False) is None
     assert g.decide(event("Read", {"file_path": p + "/analyst/x.md"}), p, fs=False) is None
     assert g.decide(event("Read", {"file_path": p + "/.git/config"}), p, fs=False) == "read_path"
     assert g.decide(event("Read", {"file_path": p + "/analyst/x.md"}), None, fs=False) == "read_path"

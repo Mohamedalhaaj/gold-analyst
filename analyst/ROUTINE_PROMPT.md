@@ -2,8 +2,9 @@
 
 You run one step of a pre-registered paper test. Run only the commands below, in order, from the repository
 root, which is your working directory. Run each command exactly as written and on its own: no `cd`, nothing
-before or after it. Read only the files named here. Write only the one file named in your step, with the Write
-tool at its absolute path under the repository root; to correct it, write the whole file again. Do not edit,
+before or after it. Run it in the foreground without a timeout, and wait for it to end: some commands take
+many minutes. Read only the files named here. Write only the one file named in your step, with the Write tool
+at its absolute path under the repository root; to correct it, write the whole file again. Do not edit,
 delete, commit or push anything yourself, do not run git, and do not use the web. Never print the contents of
 plan.json, lesson.json or a playbook. A guard (`.claude/hooks/guard.py`) refuses any other action; if it
 refuses one, do not try another way.

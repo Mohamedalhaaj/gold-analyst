@@ -105,6 +105,15 @@ ROWS = [
     ("remote_trigger", call("RemoteTrigger", {"action": "list"}, "denied", "guard: tool: x"),
      [("VIOLATION", "forbidden_attempt")]),
     ("unknown_tool", call("SomeNewTool", {}, "denied", "guard: tool: x"), [("VIOLATION", "forbidden_attempt")]),
+    # second review of A7 (decision 20): an allowed line with a timeout below 3600000 ms is refused `bash_option`
+    # and is harmless by R-AN-86 (a)(i); the settings' own value is allowed
+    ("timeout_short_denied", call("Bash", {"command": L + "context", "timeout": 120000}, "denied",
+                                  "guard: bash_option: x"), [("WARNING", "guard_denied_benign")]),
+    ("timeout_short_executed", call("Bash", {"command": L + "start", "timeout": 1000}),
+     [("VIOLATION", "guard_not_enforced")]),
+    ("timeout_settings_value", call("Bash", {"command": L + "context", "timeout": 3600000}), []),
+    ("background_executed", call("Bash", {"command": L + "context", "run_in_background": True}),
+     [("VIOLATION", "guard_not_enforced")]),
 ]
 
 

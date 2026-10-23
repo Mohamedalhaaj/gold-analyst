@@ -6,6 +6,11 @@ analyst/ROUTINE_PROMPT.md (CALL, LESSON, REVISION) and `probe`; Read only inside
 only to .analyst_run/plan.json, lesson.json or playbook.md under the root. Everything else is refused, every unknown
 tool included. Standard library only (json, os, stat, sys); no network, no subprocess, no file write.
 
+Second review of A7 (decision 20): a Bash `timeout` below the 3600000 ms that `.claude/settings.json` sets as
+BASH_DEFAULT_TIMEOUT_MS and BASH_MAX_TIMEOUT_MS is refused (`bash_option`), as a background run is: either would
+let an allowed command move to the background, where the session cannot read its output and could run a second
+command beside it.
+
 Protocol: the hook's JSON event on stdin, CLAUDE_PROJECT_DIR in the environment. Allowed: exit 0, nothing printed (the
 guard never answers "allow", so the permission rules and auto mode's classifier stay a second check). Refused: the
 compact JSON permissionDecision "deny" on stdout, `guard: <code>: <message>` on stderr, exit 2. Fail closed: any
@@ -37,6 +42,7 @@ LINES = frozenset((
 TOOLS = ("Bash", "Read", "Write")
 BASH_KEYS = frozenset(("command", "description", "timeout", "run_in_background", "dangerouslyDisableSandbox"))
 BASH_OFF = ("run_in_background", "dangerouslyDisableSandbox")
+BASH_TIMEOUT_MIN_MS = 3600000       # the settings' BASH_DEFAULT_TIMEOUT_MS and BASH_MAX_TIMEOUT_MS (check 6(b))
 DRAFTS = ("plan.json", "lesson.json", "playbook.md")
 GUARD_REL = "/.claude/hooks/guard.py"
 MESSAGES = {
@@ -46,7 +52,8 @@ MESSAGES = {
             "Do not try another way.",
     "bash_form": "run only the commands written in analyst/ROUTINE_PROMPT.md, each exactly as written and on its "
                  "own: no cd, nothing before or after it. Do not try another way.",
-    "bash_option": "run the command in the foreground, with no option other than a description or a timeout.",
+    "bash_option": "run the command in the foreground, with no option other than a description, and leave out the "
+                   "timeout (one below 3600000 ms is refused).",
     "bash_cwd": "commands run only from the repository root.",
     "read_path": "read only files inside this repository, outside .git, by their absolute paths.",
     "write_path": "write only the one file your step names, .analyst_run/plan.json, .analyst_run/lesson.json or "
@@ -148,6 +155,10 @@ def _decide(event, root, fs):
             v = ti.get(k)
             if v is not None and v is not False:
                 return "bash_option"
+        to = ti.get("timeout")                     # absent, null, or a number of at least BASH_TIMEOUT_MIN_MS
+        if to is not None and (isinstance(to, bool) or not isinstance(to, (int, float))
+                               or not to >= BASH_TIMEOUT_MIN_MS):
+            return "bash_option"
         if cmd.strip(" ") not in LINES:
             return "bash_form"
         if fs:

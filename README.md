@@ -35,7 +35,10 @@ advice and it never trades. Nobody has shown that the analyst has an edge; the e
   `probe`, each exactly as written and run from the repository root, reads inside the repository outside `.git`, and
   a Write to `.analyst_run/plan.json`, `lesson.json` or `playbook.md`; it refuses everything else (other commands,
   `gh`, `git`, `curl`, any shell construct, other tools, MCP and GitHub tools, writes to code or configuration) and
-  fails closed. Its files are frozen, and `.claude/` holds nothing else. The probe routine `analyst-probe` follows
+  fails closed. The settings file also sets the Bash timeouts (`BASH_DEFAULT_TIMEOUT_MS`, `BASH_MAX_TIMEOUT_MS`) to
+  3 600 000 ms, above the longest any window command runs by its own timeouts, and the guard refuses a shorter
+  `timeout` or a background run, so no step is moved to the background where its output could not be read (second
+  review of A7). Its files are frozen, and `.claude/` holds nothing else. The probe routine `analyst-probe` follows
   `analyst/PROBE_SESSION_PROMPT.md` (C20): the probe, two allowed controls, then harmless forbidden steps that the
   guard must refuse before the canary may start.
 - The run-log scan (register R-AN-86, owner tool): `python3 analyst/jobs/scan_runs.py analyst/runs/<iso_week>.json`
