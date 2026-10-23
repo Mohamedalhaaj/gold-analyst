@@ -40,18 +40,24 @@ TERMINAL_STATUSES = ("called", "stay_out", "no_call:refusal", "no_call:invalid",
 def patterns(prefix):
     p = re.escape(prefix)
     return [
-        ("attempt", re.compile(rf"^{p}attempts/(?P<draw>{CID}|lesson-{CID}|revision-v[1-9][0-9]*)_(?P<n>[12])\.json$")),
-        ("call", re.compile(rf"^{p}calls/(?P<cid>{CID})\.json$")),
-        ("lesson", re.compile(rf"^{p}lessons/(?P<cid>{CID})\.json$")),
-        ("revision", re.compile(rf"^{p}playbooks/v(?P<k>[1-9][0-9]*)\.md$")),
+        ("attempt", re.compile(rf"{p}attempts/(?P<draw>{CID}|lesson-{CID}|revision-v[1-9][0-9]*)_(?P<n>[12])\.json")),
+        ("call", re.compile(rf"{p}calls/(?P<cid>{CID})\.json")),
+        ("lesson", re.compile(rf"{p}lessons/(?P<cid>{CID})\.json")),
+        ("revision", re.compile(rf"{p}playbooks/v(?P<k>[1-9][0-9]*)\.md")),
     ]
 
 
+CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
 def classify_path(path):
-    """(kind, mode, match) or (None, None, None)."""
+    """(kind, mode, match) or (None, None, None). The whole path must match one pattern and hold no control character
+    (R-AN-33 clarification A3 of 2026-10-23: `$` with re.match also matched before a trailing newline)."""
+    if CONTROL_RE.search(path):
+        return None, None, None
     for mode in ("canary", "live"):          # canary first: its prefix is longer
         for kind, rx in patterns(paths.prefix(mode)):
-            m = rx.match(path)
+            m = rx.fullmatch(path)
             if m:
                 return kind, mode, m
     return None, None, None
@@ -117,6 +123,11 @@ class Workspace:
         return [(parts[i], parts[i + 1]) for i in range(0, len(parts) - 1, 2)]
 
     def show(self, sha, path):
+        """The bytes of the regular file at `path` in commit `sha`; None when it is missing or not a regular file (a
+        symlink or a submodule entry: amended R-AN-33)."""
+        ls = self.git("ls-tree", "-z", sha, "--", path, check=False)
+        if ls.returncode != 0 or not ls.stdout.startswith((b"100644 blob ", b"100755 blob ")):
+            return None
         p = self.git("show", f"{sha}:{path}", check=False)
         return p.stdout if p.returncode == 0 else None
 
@@ -245,7 +256,11 @@ class Merge:
             self.subjects.append(f"complete seq {c['seq']}")
             if missing:
                 unrecovered.append((mode, doc, missing[0]))
+        posted = {((c["payload"].get("push") or {}).get("after"), c["payload"].get("path"))
+                  for c in self.bot_comments() if c["payload"].get("reason") == "invalid_content"}
         for mode, doc, path in unrecovered:
+            if ((doc.get("push") or {}).get("after"), path) in posted:
+                continue                          # an earlier run already posted it, then failed to push
             self.reject(mode, doc.get("kind") or "push", doc.get("id"), "invalid_content", path, doc.get("push"))
 
     def _completion_bytes(self, doc, wr):
@@ -486,7 +501,7 @@ class Merge:
             return self.reject(wmode, kind, id_, "mode", path, push)
         mode = pmode
         data = self.ws.show(after, path)
-        if data is None:                          # not a regular file (a submodule entry): not an allowed file
+        if data is None:                          # not a regular file (a symlink or a submodule entry)
             return self.reject(wmode, "push", None, "agent_scope", path, push)
         sha = rec.sha256_bytes(data)
         on_main = self.view.read(path)

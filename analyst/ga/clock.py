@@ -25,7 +25,7 @@ WINDOWS = ("W1", "W2")
 _SPEC = {"W1": (LONDON, (8, 0), (12, 0)), "W2": (NEW_YORK, (9, 30), (13, 30))}
 EXCHANGE = {"W1": "LSE", "W2": "NYSE"}
 LOCAL_TZ = {"W1": LONDON, "W2": NEW_YORK}
-CALL_ID_RE = re.compile(r"^([0-9]{4}-[0-9]{2}-[0-9]{2})_(W[12])$")
+CALL_ID_RE = re.compile(r"([0-9]{4}-[0-9]{2}-[0-9]{2})_(W[12])")
 
 
 def to_server(t):
@@ -89,7 +89,7 @@ def call_id(day, name):
 
 
 def parse_call_id(cid):
-    m = CALL_ID_RE.match(cid or "")
+    m = CALL_ID_RE.fullmatch(cid or "")
     if not m:
         raise ValueError(f"bad call_id {cid!r}")
     return dt.date.fromisoformat(m.group(1)), m.group(2)

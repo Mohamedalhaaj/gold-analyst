@@ -61,12 +61,12 @@ def parse_iso(s):
     return dt.datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
 
 
-_GH = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d+)?(Z|[+-]\d{2}:\d{2})$")
+_GH = re.compile(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d+)?(Z|[+-]\d{2}:\d{2})")
 
 
 def normalize_gh(s):
     """A GitHub API timestamp -> R-C4 (fractional seconds truncated, offset converted to Z)."""
-    m = _GH.match(s or "")
+    m = _GH.fullmatch(s or "")
     if not m:
         raise ValueError(f"not an ISO timestamp: {s!r}")
     base = dt.datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%S")
