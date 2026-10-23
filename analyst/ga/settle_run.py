@@ -5,7 +5,12 @@ The closer runs first, so the run starts with the complete read of the inbox's a
 any witness, terminal, revision or settlement record (R-AN-39, R-AN-40); settlement waits for the next settle run.
 Settlement stops, logging `call_file_missing <call_id>`, at a `called` terminal whose call file is not on main (a lock
 whose bytes could not be reproduced, §16.18 A6 second review, GA-B1): it never settles without the call, and never
-fails every later run on it."""
+fails every later run on it.
+
+Fourth review of §16.18 A6 (N1, N2, J-4): a run that reaches the merge's run budget (R-AN-32) skips only steps 2 and 3
+of the closer; settlement, the pause rule and the state still run, so slow pushes never hold back a pause. The fetched
+verdict feeds P7 and the pause rule only when it is fresh (state.fresh_verdict: asof_utc within 48 h); 48 h without a
+fresh one pauses `judge_silent` (R-AN-55, R-AN-70)."""
 import json
 import urllib.request
 
@@ -18,6 +23,8 @@ SNAPSHOTS = ("analyst/STATE.json", "analyst/ledger.csv")
 
 
 def fetch_verdict(pins, timeout=20):
+    """The deployed verdict, or None when the fetch fails or the file is not a verdict. Whether it counts (fresh) is
+    decided against the run's t0 in state.run_state (R-AN-70)."""
     base = (pins or {}).get("judge_site_url")
     if not base:
         return None

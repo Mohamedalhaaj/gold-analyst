@@ -16,6 +16,10 @@ first activity answer listing it, or -1. The record keeps only integers, enums a
 is kept or printed. Interpretations (logged for the register): a probe not run in time has outcome null; a canary
 context that fetched no hour file probes Dukascopy with the `probe` GET; probe commits carry head's commit time, so a
 re-run on the same head pushes the same commits.
+
+Fourth review of §16.18 A6 (R-AN-84, decision 31): the REST write probes pass on `scope` as well as `denied`, and a
+canary `net.dukascopy` whose fetches all gave 0 (an outage or a blocked network: the call is `no_call:data`) has pass
+null, so the call's probe verdict is `incomplete`, not `fail`; `probe` keeps "200".
 """
 import json
 import os
@@ -165,8 +169,10 @@ def _is_int(v):
 
 def _rule(p, v, kind):
     """R-AN-84's "Pass iff" column for one outcome that is set and not error/none."""
-    if p == "net.dukascopy":
-        return _is_int(v) and (v != 0 if kind == "canary" else v == 200)
+    if p == "net.dukascopy":                # canary: null when every fetch gave 0 (fourth review of §16.18 A6)
+        if not _is_int(v):
+            return False
+        return (True if v != 0 else None) if kind == "canary" else v == 200
     if p == "net.google":
         return _is_int(v) and (v == 0 or not 200 <= v <= 399)
     if p == "net.raw_public":
@@ -178,7 +184,7 @@ def _rule(p, v, kind):
     if p == "rest.hooks":
         return (v == 0) if _is_int(v) else None
     if p in ("rest.force_main", "rest.tag_create", "rest.delete_branch"):
-        return v == "denied"
+        return v in ("denied", "scope")     # refused either way; only `ok` fails (fourth review of §16.18 A6)
     if p == "git.ls_remote_inbox":
         return v == "accepted"
     if p.startswith("git.ls_remote_"):

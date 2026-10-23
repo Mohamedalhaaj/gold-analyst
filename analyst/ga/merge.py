@@ -33,10 +33,21 @@ After the second review of §16.18 A6 (GA-B1, SEC-3), a GitHub outage can delay 
   range_start is not marked `skipped` (`stale_week`);
 - a window with an accepted call witness and no terminal (a run that failed between the call's witness and the
   terminal's, or a call whose chain waited) gets that call's own terminal (R-AN-36), never `no_call:run`.
+
+After the fourth review of §16.18 A6 (N1), time budgets bound what one push can cost a run (R-AN-32):
+- a round of fetch tries has ROUND_BUDGET_S from its first fetch command, the waits included; each fetch command's
+  timeout is the smaller of FETCH_TIMEOUT_S and the time left, and none starts once it is spent (`fetch_round=budget`);
+- the local git work on one fetched commit (merge-base, diff, ls-tree, cat-file -s, show) shares LOCAL_BUDGET_S;
+  beyond it the push is `agent_scope` with path null (a completion's source is then unrecovered);
+- the run budget: once RUN_BUDGET_S have passed since the run started (before the read), no new push and no
+  completion of a comment starts; the run logs `run_budget <count left>`, skips steps 2 and 3 of the closer and
+  commits what it wrote. The next run goes on; analyst-settle still settles and applies the pause rule.
+So one push costs at most 2 x 240 + 2 x 130 + 60 = 800 s before its witness; the jobs' timeout is 45 minutes.
 """
 import datetime as dt
 import re
 import subprocess
+import time
 
 from . import clock, paths, plan, rec, records, tables, weekly, witness
 from .ghapi import ActivityReadFailed
@@ -62,6 +73,9 @@ FETCH_RETRY_S = 20
 FETCH_ROUNDS = 2                     # rounds of FETCH_TRIES, each followed by the inbox check (GA-B1-R)
 REACH_TIMEOUT_S = 30                 # the fetch of inbox main that tells an outage from an unfetchable commit (GA-B1)
 REACH_TRIES = 3
+ROUND_BUDGET_S = 240                 # one round of fetch tries, the waits included (N1)
+LOCAL_BUDGET_S = 60                  # the local git work on one fetched commit (N1)
+RUN_BUDGET_S = 15 * 60               # no new push or completion after this (N1)
 MAX_BLOB = 4 * 1024 * 1024           # an allowed blob above this is agent_scope and never read
 NO_AUTH = ("-c", "http.https://github.com/.extraheader=")   # drops the token actions/checkout persisted
 PROTO_V2 = ("-c", "protocol.version=2")   # the server then lists only the ref asked for: no branch flood in the answer
@@ -72,6 +86,10 @@ TERMINAL_STATUSES = ("called", "stay_out", "no_call:refusal", "no_call:invalid",
 class InboxUnavailable(Exception):
     """The inbox does not answer git: a GitHub outage. The run stops before anything is posted for the push or the
     comment at hand, commits nothing and exits 1; the next run retries (R-AN-32, §16.18 A6 second review, GA-B1)."""
+
+
+class LocalBudgetSpent(Exception):
+    """The local git work on one fetched commit took its whole LOCAL_BUDGET_S (N1)."""
 
 
 class StaleWindow(Exception):
@@ -137,12 +155,15 @@ class Workspace:
     """The checkout of main the job writes into, plus git access to pushed commits as data. `inbox_url` is where
     pushed commits are fetched from (the public inbox); `sleep` paces the fetch retries."""
 
-    def __init__(self, repo_dir, runner=subprocess.run, inbox_url=None, sleep=lambda s: None):
+    def __init__(self, repo_dir, runner=subprocess.run, inbox_url=None, sleep=lambda s: None, mono=time.monotonic):
         self.repo_dir = str(repo_dir)
         self.run = runner
         self.view = DirView(repo_dir)
         self.inbox_url = inbox_url
         self.sleep = sleep
+        self.mono = mono                     # the clock of the time budgets (N1)
+        self.log = lambda s: None            # set by Merge
+        self._local_end = None
 
     def git(self, *args, check=True, input_bytes=None, timeout=None, pre=()):
         argv = ["git", "-C", self.repo_dir, *pre, *args]
@@ -178,18 +199,33 @@ class Workspace:
         raise RuntimeError("the pushed commit cannot be fetched")
 
     def fetch_round(self, sha, specs):
-        """One round: each spec in turn, FETCH_TIMEOUT_S per git fetch; a failed try is repeated up to FETCH_TRIES
-        times, FETCH_RETRY_S apart, and a timeout ends the round. True once the commit is in the checkout."""
+        """One round: each spec in turn; a failed try is repeated up to FETCH_TRIES times, FETCH_RETRY_S apart, and a
+        timeout ends the round. The round has ROUND_BUDGET_S from its first fetch command, the waits included: a
+        fetch's timeout is the smaller of FETCH_TIMEOUT_S and the time left, and the round ends (`fetch_round=budget`)
+        when no time is left for a command or a wait (N1). True once the commit is in the checkout."""
+        start = self.mono()
+
+        def left():
+            return ROUND_BUDGET_S - (self.mono() - start)
         for i in range(FETCH_TRIES):
             for spec in specs:
+                t = min(FETCH_TIMEOUT_S, left())
+                if t <= 0:
+                    self.log("fetch_round=budget")
+                    return False
                 try:
                     self.git("fetch", "--quiet", "--no-tags", self.inbox_url, *spec, check=False,
-                             timeout=FETCH_TIMEOUT_S, pre=NO_AUTH)
+                             timeout=t, pre=NO_AUTH)
                 except subprocess.TimeoutExpired:
+                    if t < FETCH_TIMEOUT_S:
+                        self.log("fetch_round=budget")
                     return False
                 if self.has_commit(sha):
                     return True
             if i < FETCH_TRIES - 1:
+                if left() <= FETCH_RETRY_S:
+                    self.log("fetch_round=budget")
+                    return False
                 self.sleep(FETCH_RETRY_S)
         return False
 
@@ -209,27 +245,43 @@ class Workspace:
                 self.sleep(FETCH_RETRY_S)
         return False
 
+    def local_budget(self):
+        """Start the LOCAL_BUDGET_S that the local git commands on one fetched commit share (N1)."""
+        self._local_end = self.mono() + LOCAL_BUDGET_S
+
+    def _local_timeout(self):
+        """The time left of the local budget, the timeout of the next local command; LocalBudgetSpent when none is
+        left. None while no budget runs."""
+        if self._local_end is None:
+            return None
+        t = self._local_end - self.mono()
+        if t <= 0:
+            raise LocalBudgetSpent()
+        return t
+
     def blob_size(self, sha, path):
-        """The size of the blob at `path` in commit `sha` (`git cat-file -s`), or None."""
-        p = self.git("cat-file", "-s", f"{sha}:{path}", check=False)
+        """The size of the blob at `path` in commit `sha` (`git cat-file -s`), or None. Under the local budget: a
+        timeout raises subprocess.TimeoutExpired, a spent budget LocalBudgetSpent."""
+        p = self.git("cat-file", "-s", f"{sha}:{path}", check=False, timeout=self._local_timeout())
         try:
             return int(p.stdout.decode().strip()) if p.returncode == 0 else None
         except ValueError:
             return None
 
     def diff_entries(self, after):
-        base = self.git("merge-base", "HEAD", after).stdout.decode().strip()
-        out = self.git("diff", "--no-renames", "--name-status", "-z", base, after).stdout.decode("utf-8")
+        base = self.git("merge-base", "HEAD", after, timeout=self._local_timeout()).stdout.decode().strip()
+        out = self.git("diff", "--no-renames", "--name-status", "-z", base, after,
+                       timeout=self._local_timeout()).stdout.decode("utf-8")
         parts = [x for x in out.split("\0") if x != ""]
         return [(parts[i], parts[i + 1]) for i in range(0, len(parts) - 1, 2)]
 
     def show(self, sha, path):
         """The bytes of the regular file at `path` in commit `sha`; None when it is missing or not a regular file (a
-        symlink or a submodule entry: amended R-AN-33)."""
-        ls = self.git("ls-tree", "-z", sha, "--", path, check=False)
+        symlink or a submodule entry: amended R-AN-33). Under the local budget, as blob_size."""
+        ls = self.git("ls-tree", "-z", sha, "--", path, check=False, timeout=self._local_timeout())
         if ls.returncode != 0 or not ls.stdout.startswith((b"100644 blob ", b"100755 blob ")):
             return None
-        p = self.git("show", f"{sha}:{path}", check=False)
+        p = self.git("show", f"{sha}:{path}", check=False, timeout=self._local_timeout())
         return p.stdout if p.returncode == 0 else None
 
     def write(self, path, data):
@@ -296,6 +348,14 @@ class Merge:
         self.seqs = []                       # the witness seqs whose files this run wrote
         self._run_created = None
         self._acting = False                 # set once a push's processing has written or posted anything
+        self.mono = getattr(ws, "mono", time.monotonic)
+        self._t0_mono = self.mono()          # the run budget counts from here, before the read (N1)
+        self.left_over = 0                   # pushes and completions the run budget left to the next run
+        ws.log = log
+
+    def over_budget(self):
+        """True once RUN_BUDGET_S have passed since the run started: no new push or completion starts (N1)."""
+        return self.mono() - self._t0_mono >= RUN_BUDGET_S
 
     # ------------------------------------------------------------ the inbox's activity (R-AN-32, R-AN-39 step 1)
     def read_inbox(self):
@@ -435,6 +495,9 @@ class Merge:
         for c in list(self.bot_comments()):
             if c["seq"] in have:
                 continue
+            if self.over_budget():               # the next run completes it (N1)
+                self.left_over += 1
+                continue
             doc = dict(c["payload"])
             doc["comment"] = {"issue": self.issue, "id": c["id"], "created_utc": c["created_utc"],
                               "body_sha256": rec.sha256_bytes(c["body"].encode("utf-8"))}
@@ -471,6 +534,7 @@ class Merge:
             return rec.record_bytes(wr["record"])
         after = (doc.get("push") or {}).get("after")
         self.ws.fetch_commit(after, (doc.get("push") or {}).get("ref"))
+        self.ws.local_budget()                    # the same budgets as a push (N1)
         return self.ws.show(after, wr["path"])
 
     # ------------------------------------------------------------ witness posting
@@ -629,8 +693,15 @@ class Merge:
         #    after a witness comment was posted raises too, so no window is closed over a push not yet witnessed.
         if self.acts is None:
             self.read_inbox()
-        for e in self.pushes_to_process():
+        todo = self.pushes_to_process()
+        for i, e in enumerate(todo):
+            if self.over_budget():               # N1: the next run goes on from here
+                self.left_over += len(todo) - i
+                break
             self.process_push(e)
+        if self.left_over:
+            self.log(f"run_budget {self.left_over}")
+            return                                # steps 2 and 3 wait for a run that processed every push
         # 2. expected windows without a terminal, in window order: the current mode's, and a finished canary
         #    period's (canary_to set) after the switch to live, so no canary window stays open. A window with an
         #    accepted call witness gets that call's terminal (R-AN-36), past its deadline or not. Any other window
@@ -724,12 +795,13 @@ class Merge:
                 "actor": (entry.get("actor") or {}).get("login")}
         try:
             self.ws.fetch_commit(after, ref)
+            self.ws.local_budget()
             entries = self.ws.diff_entries(after)
         except InboxUnavailable:                  # an outage: nothing is posted for this push (GA-B1)
             self.log("inbox_fetch=unreachable")
             raise
         except Exception:  # noqa: BLE001 - checked below: no diff means not exactly one allowed added file
-            entries = None
+            entries = None                        # (the local budget included: N1)
         wmode = self.mode if self.mode in ("live", "canary") else "live"
         if entries is None:
             return self.reject(wmode, "push", None, "agent_scope", None, push)
@@ -745,10 +817,13 @@ class Merge:
         if pmode != self.mode:
             return self.reject(wmode, kind, id_, "mode", path, push)
         mode = pmode
-        size = self.ws.blob_size(after, path)
-        if size is not None and size > MAX_BLOB:  # never read (R-AN-32, fetch bound)
-            return self.reject(wmode, "push", None, "agent_scope", path, push)
-        data = self.ws.show(after, path)
+        try:
+            size = self.ws.blob_size(after, path)
+            if size is not None and size > MAX_BLOB:  # never read (R-AN-32, fetch bound)
+                return self.reject(wmode, "push", None, "agent_scope", path, push)
+            data = self.ws.show(after, path)
+        except (subprocess.TimeoutExpired, LocalBudgetSpent):   # the local budget is spent (N1)
+            return self.reject(wmode, "push", None, "agent_scope", None, push)
         if data is None:                          # not a regular file (a symlink or a submodule entry)
             return self.reject(wmode, "push", None, "agent_scope", path, push)
         sha = rec.sha256_bytes(data)

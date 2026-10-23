@@ -87,6 +87,13 @@ def test_merge_polls_and_runs_mains_code():
     assert "environment" not in d["jobs"]["merge"]
 
 
+def test_merge_and_settle_have_the_45_minute_job_timeout():
+    """The 15-minute run budget (from the run's start, the read included), one more push (at most 800 s), the commit,
+    and in settle the settlement and the state, fit with a margin (register R-AN-32, §16.18 A6 fourth review, N1)."""
+    assert load("analyst-merge.yml")["jobs"]["merge"]["timeout-minutes"] == 45
+    assert load("analyst-settle.yml")["jobs"]["settle"]["timeout-minutes"] == 45
+
+
 def test_settle_and_track_and_deploy():
     s = load("analyst-settle.yml")
     assert s["concurrency"] == {"group": "analyst", "cancel-in-progress": False}

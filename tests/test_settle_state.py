@@ -29,8 +29,10 @@ def test_settle_end_to_end_live(tmp_path):
     mirror = store_files(clock.days_range(dt.date(2026, 9, 1), dt.date(2026, 11, 10)))
     h.world.owner_commit(mirror, "analyst mirror")
     ws = h.workspace("settle")
+    sound = {"schema": "analyst-verdict/1", "analyst_verdict": "SOUND", "asof_utc": "2026-11-11T08:50:00Z",
+             "violation_keys": [], "cleared_keys": []}
     st, done = settle_run.run_settle(ws, h.api, h.now, {"workflow": "analyst-settle", "id": 9, "attempt": 1,
-                                                        "event": "push"}, verdict=None)
+                                                        "event": "push"}, verdict=sound)
     s = h.main_json("analyst/settled/2026-11-10_W1.json")
     assert s["class"] == "shakedown" and s["action"] == "buy" and s["side"] == 1
     assert s["outcome"]["status"] == "final" and s["opposite"]["status"] == "final"
@@ -49,15 +51,21 @@ def test_settle_end_to_end_live(tmp_path):
     assert stj["state"] == "SHAKEDOWN" and stj["n"] == 0 and stj["calls_enabled"] is True
     assert stj["last_processed_day"] == "2026-11-10"
     assert stj["K"] == 1.0                     # before a promotion K = 1.0 (R-AN-52, §16.18 A4; lab R-V1-34)
+    assert stj["judge_verdict"] == {"value": "SOUND", "asof_utc": "2026-11-11T08:50:00Z", "fetched": True,
+                                    "fresh": True, "last_fresh_asof_utc": "2026-11-11T08:50:00Z"}
     led = list(csv.DictReader(io.StringIO(h.world.main_file("analyst/ledger.csv").decode())))
     assert [r["call_id"] for r in led] == ["2026-11-10_W1", "2026-11-10_W2", "2026-11-11_W1"]
     assert led[2]["status"] == "missed:trigger" and led[2]["twin_status"] == ""   # 11-11 not in the store yet
     assert led[0]["class"] == "shakedown" and led[0]["trade_no"] == "" and led[0]["R"] != ""
     assert list(led[0]) == state.LEDGER_COLS
-    # a second run is a no-op for settled records (create-only) and keeps the state
+    # a second run is a no-op for settled records (create-only) and keeps the state; its failed verdict fetch
+    # carries the last fresh verdict over (R-AN-56), so nothing pauses
     ws = h.workspace("settle2")
     settle_run.run_settle(ws, h.api, h.now, {"workflow": "analyst-settle", "id": 10, "attempt": 1, "event": "x"})
     assert h.main_json("analyst/settled/2026-11-10_W1.json") == s
+    stj = h.main_json("analyst/STATE.json")
+    assert stj["calls_enabled"] is True and stj["judge_verdict"]["fresh"] is False
+    assert stj["judge_verdict"]["last_fresh_asof_utc"] == "2026-11-11T08:50:00Z"
 
 
 def test_settle_waits_for_the_store(tmp_path):
@@ -112,11 +120,14 @@ def evaluate(view, days, verdict, now=None):
         out.append(json.loads(b))
 
     now = now or dt.datetime.combine(days[-1] + dt.timedelta(days=1), dt.time(12), tzinfo=UTC)
+    if verdict is not None and verdict.get("asof_utc") == NOW:      # a fresh verdict (R-AN-70, N2): asof = the run
+        verdict = dict(verdict, asof_utc=rec.iso(now))
     st = state.run_state(view, days, now, 1, "h", verdict, write)
     return st, out
 
 
-SOUND = {"analyst_verdict": "SOUND", "asof_utc": "x", "violation_keys": []}
+NOW = "@now"
+SOUND = {"schema": "analyst-verdict/1", "analyst_verdict": "SOUND", "asof_utc": NOW, "violation_keys": []}
 
 
 def test_promotion_needs_all_of_p1_to_p7():
@@ -166,21 +177,27 @@ def test_model_overlay_pauses_and_clear_resumes():
     st, evs = evaluate(view, days, SOUND)
     assert any(e["event"] == "PAUSED" and e["reason"] == "model:r1" for e in evs)
     assert st["calls_enabled"] is False and st["n"] == 4                     # the overlaid trade left the set
-    view.files["analyst/ADJUDICATIONS.csv"] = b"utc,ref,subject,decision,note\n2026-11-20T00:00:00Z,pause,model:r1,clear,ok\n"
-    st, evs = evaluate(view, days, SOUND)
+    # the clear row is dated at or after the PAUSED event (11-21 12:00; R-AN-62, fourth review of §16.18 A6)
+    view.files["analyst/ADJUDICATIONS.csv"] = (b"utc,ref,subject,decision,note\n"
+                                               b"2026-11-21T12:30:00Z,pause,model:r1,clear,ok\n")
+    st, evs = evaluate(view, days, SOUND, now=dt.datetime(2026, 11, 21, 13, tzinfo=UTC))
     assert any(e["event"] == "RESUMED" for e in evs) and st["calls_enabled"] is True
 
 
 def test_judge_violation_pauses_then_retires_on_a_new_key_after_a_clear():
-    view, days = records_view([0.1] * 5)
-    v1 = {"analyst_verdict": "VIOLATION", "violation_keys": ["A1|x|p|c1"]}
+    """In the live period (R-AN-55 as amended in the fourth review of §16.18 A6; tests/test_pause_rule.py)."""
+    mode = {"analyst/MODE.json": json.dumps({"mode": "live", "canary_from": None, "live_from": "2026-11-16"})}
+    view, days = records_view([0.1] * 5, extra=mode)
+    v1 = {"schema": "analyst-verdict/1", "analyst_verdict": "VIOLATION", "asof_utc": NOW,
+          "violation_keys": ["A1|x|p|c1"]}
     st, evs = evaluate(view, days, v1)
     assert st["calls_enabled"] is False and "judge_violation:A1|x|p|c1" in st["pause_reasons"]
     view.files["analyst/ADJUDICATIONS.csv"] = (b"utc,ref,subject,decision,note\n"
-                                               b"2026-11-20T00:00:00Z,pause,judge_violation:A1|x|p|c1,clear,ok\n")
-    st, evs = evaluate(view, days, v1)
+                                               b"2026-11-21T12:30:00Z,pause,judge_violation:A1|x|p|c1,clear,ok\n")
+    st, evs = evaluate(view, days, v1, now=dt.datetime(2026, 11, 21, 13, tzinfo=UTC))
     assert st["calls_enabled"] is True
-    st, evs = evaluate(view, days, {"analyst_verdict": "VIOLATION", "violation_keys": ["A1|x|p|c2"]})
+    st, evs = evaluate(view, days, dict(v1, violation_keys=["A1|x|p|c2"]),
+                       now=dt.datetime(2026, 11, 21, 14, tzinfo=UTC))
     assert st["state"] == "RETIRED" and any(e["reason"] == "violation" for e in evs)
 
 

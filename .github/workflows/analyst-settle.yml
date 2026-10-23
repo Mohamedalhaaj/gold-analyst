@@ -26,7 +26,7 @@ permissions:
 jobs:
   settle:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45                  # the 15-minute run budget, one more push (13.3 min) and the commit (N1)
     steps:
       - name: Run guard (main only)
         run: |

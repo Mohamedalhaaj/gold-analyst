@@ -243,7 +243,11 @@ def test_activity_seen_s_measures_the_listing_delay(tmp_path):
     ({"rest.hooks": 2}, "rest.hooks", False),
     ({"net.google": 302}, "net.google", False),
     ({"net.google": 403}, "net.google", True),
-    ({"rest.force_main": "scope"}, "rest.force_main", False),
+    ({"rest.force_main": "scope"}, "rest.force_main", True),         # refused either way (fourth review)
+    ({"rest.tag_create": "scope"}, "rest.tag_create", True),
+    ({"rest.delete_branch": "scope"}, "rest.delete_branch", True),
+    ({"rest.force_main": "ok"}, "rest.force_main", False),
+    ({"rest.delete_branch": "ok"}, "rest.delete_branch", False),
     ({"admin_probe": "scope"}, "admin_probe", True),
     ({"admin_probe": "none"}, "admin_probe", None),
     ({"branch_delete": "error"}, "branch_delete", None),
@@ -254,6 +258,16 @@ def test_pass_rules(outcomes, probe, want):
     base = dict(EXPECTED)
     base.update(outcomes)
     assert probes.passes(base, "probe")[probe] is want
+
+
+@pytest.mark.parametrize("kind,code,want", [
+    ("canary", 200, True), ("canary", 404, True), ("canary", 0, None),     # null when every fetch gave 0 (R-AN-84,
+    ("probe", 200, True), ("probe", 404, False), ("probe", 0, False),      # fourth review); `probe` keeps 200
+])
+def test_net_dukascopy_pass_rule(kind, code, want):
+    p = probes.passes(dict(EXPECTED, **{"net.dukascopy": code}), kind)
+    assert p["net.dukascopy"] is want
+    assert probes.verdict(p) == {True: "pass", False: "fail", None: "incomplete"}[want]
 
 
 def test_the_git_positive_control_nulls_every_git_probe():

@@ -100,22 +100,31 @@ class InboxActivity:
     - the read is complete when every page answered 200 with a JSON list and the last page's Link header has no
       rel="next"; then it returns (entries, "token" | "anonymous"). Otherwise it raises ActivityReadFailed.
     A next link must stay on the API host (the token is never sent elsewhere); a link already followed, or more than
-    MAX_PAGES pages, fails the read (a loop guard)."""
+    MAX_PAGES pages, fails the read (a loop guard). The whole read, its restart included, has BUDGET_S from its first
+    request (§16.18 A6 fourth review, N1): a request's timeout is the smaller of PAGE_TIMEOUT_S and the time left, and
+    the read fails when no time is left for a request or a wait."""
 
     PAGE_TIMEOUT_S = 30
     TRIES = 3
     RETRY_S = 20
     MAX_PAGES = 1000
+    BUDGET_S = 600
 
-    def __init__(self, repo, token=None, http=urllib_http, sleep=time.sleep):
+    def __init__(self, repo, token=None, http=urllib_http, sleep=time.sleep, mono=time.monotonic):
         self.repo = repo
         self._token = token if token is not None else os.environ.get("GITHUB_TOKEN", "")
         self.http = http
         self.sleep = sleep
+        self.mono = mono
+        self._t0 = None
+
+    def _left(self):
+        return self.BUDGET_S - (self.mono() - self._t0)
 
     def read_activity(self):
         if not self.repo:
             raise ActivityReadFailed("no inbox repository")
+        self._t0 = self.mono()
         first = f"{API}/repos/{self.repo}/activity?per_page=100&time_period=month"
         if self._token:
             try:
@@ -141,7 +150,10 @@ class InboxActivity:
 
     def _page(self, url, token):
         for i in range(self.TRIES):
-            status, link, body = self.http("GET", url, token, self.PAGE_TIMEOUT_S)
+            t = min(self.PAGE_TIMEOUT_S, self._left())
+            if t <= 0:
+                raise ActivityReadFailed("read budget spent")
+            status, link, body = self.http("GET", url, token, t)
             if token and status in (401, 403, 404):
                 raise _TokenRefused()
             if status == 200:
@@ -154,5 +166,7 @@ class InboxActivity:
             elif not (status == 0 or status == 429 or status >= 500):
                 raise ActivityReadFailed(f"activity page -> {status}")
             if i < self.TRIES - 1:
+                if self._left() <= self.RETRY_S:
+                    raise ActivityReadFailed("read budget spent")
                 self.sleep(self.RETRY_S)
         raise ActivityReadFailed("activity page failed after its tries")

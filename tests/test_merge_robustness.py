@@ -35,9 +35,13 @@ def legit_attempt_still_lands(h):
 
 
 def settle_runs(h, run_id=77):
+    """One settle run with the judge publishing (a fresh SOUND verdict): without one ever fetched, the analyst is
+    paused `judge_silent` from P0 on (R-AN-55, R-AN-70; §16.18 A6 fourth review, N2)."""
     ws = h.workspace(f"settle{run_id}")
+    sound = {"schema": "analyst-verdict/1", "analyst_verdict": "SOUND", "asof_utc": rec.iso(h.now()),
+             "violation_keys": [], "cleared_keys": []}
     return settle_run.run_settle(ws, h.api, h.now, {"workflow": "analyst-settle", "id": run_id, "attempt": 1,
-                                                    "event": "schedule"}, verdict=None)
+                                                    "event": "schedule"}, verdict=sound)
 
 
 def rejections(h):

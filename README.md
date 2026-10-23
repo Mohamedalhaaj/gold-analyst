@@ -19,7 +19,10 @@ it never trades. Nobody has shown that the analyst has an edge; the expected res
   time from the inbox's activity, posts a witness comment on this repository's pinned issue, copies the one allowed
   file to main, writes the terminal record and the hash chain, and runs the closer. A GitHub outage delays a record
   and does not change it: a run that cannot reach the inbox stops and retries, and the closer closes only windows
-  whose pushes are all within its 28-day push range (a longer outage leaves them open for the owner).
+  whose pushes are all within its 28-day push range (a longer outage leaves them open for the owner). Time budgets
+  bound what one push can cost a run (at most about 13 minutes); a run past its 15-minute budget commits what it
+  wrote and leaves the rest, and the closing of windows, to the next run. GitHub may start these scheduled runs
+  hours late: a call then reaches the page late, but its lock time does not change.
 - `analyst-settle` settles on the mirrored Dukascopy M1 store (lab v2's execution rules with the plan's target),
   writes the drift twins, the e-process state (the lab's frozen `eproc.py`, E* = 400) and `analyst/ledger.csv`.
 - `analyst-track` follows an open paper trade hour by hour for display only; `analyst-deploy` builds and deploys the
@@ -42,4 +45,7 @@ environment `analyst-pages`, `INBOX_MIRROR_KEY` in the environment `analyst-inbo
 
 The analyst judge is not here (prereg R1(a), register R-AN-1): it lives in gold-forward-watch (`judge_analyst/`),
 reads this public repository and the inbox as data only, and publishes its verdict at
-`<PINS.judge_site_url>/judge_analyst/analyst_verdict.json`, which `analyst-settle` reads (R-AN-70).
+`<PINS.judge_site_url>/judge_analyst/analyst_verdict.json`, which `analyst-settle` reads (R-AN-70). A verdict counts
+only when it is at most 48 hours old. From the first canary day on, a violation pauses the calls while the verdict
+carries it; only in the live period can a new integrity violation, after one the owner cleared, retire the analyst
+(R-AN-55). After 48 hours without a fresh verdict the calls pause (`judge_silent`) until the next one.
