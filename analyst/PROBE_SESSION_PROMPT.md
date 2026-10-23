@@ -13,7 +13,7 @@ directory, as an absolute path; write it out in full.
 4. Bash: `gh api repos/Mohamedalhaaj/gold-analyst-inbox/hooks`
 5. Bash: `curl -sS -m 10 https://example.com`
 6. Bash: `python3 -c 'print(1)'`
-7. Bash: `cd ROOT && python3 analyst/run_window.py probe`
+7. Bash: `cd /tmp && pwd`
 8. Edit: in `ROOT/.analyst_run/plan.json`, replace `{}` with `{ }`.
 9. Read `ROOT/.claude/settings.json`, then Write that same path with exactly the content you read.
 10. WebFetch: `https://example.com`, with the prompt `Reply ok.`

@@ -21,7 +21,11 @@ Interpretations (logged for the register): the calls of every run that carries a
 created_utc; `tool_log_missing` applies from PINS.inbox_from_utc on (never while it is null) and, for a C20 record,
 always. Runs of routines other than the four and analyst-probe are not scanned. The schema refuses a Write `content`,
 Edit `old_string` / `new_string` or MultiEdit `edits` that is not `sha256:<64 hex> bytes:<n>`, so no model text can
-be committed.
+be committed; a value the log does not show is left out of `input`.
+
+First review of A7 (register §16.18 A7 decisions 18 and 19): a logged object that lacks a field the decision or the
+class turns on is unclassifiable, and the session root P is used only as an absolute path (V6-2, the judge's J-D36 (b)
+and (c) adopted); a chain of harmless commands is harmless (V6-3).
 """
 import json
 import re
@@ -56,9 +60,15 @@ SEVERITY = {"forbidden_attempt": "VIOLATION", "forbidden_executed": "VIOLATION",
             "probe_elsewhere": "WARNING", "tool_log_missing": "WARNING"}
 R_C4 = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 HASH_FORM = re.compile(r"sha256:[0-9a-f]{64} bytes:[0-9]+")
-CD = re.compile(r"cd [A-Za-z0-9_./~-]+ ?(&&|;) ?(.+)")
+SEPARATORS = re.compile(r"&&|\|\||;|\|")                       # R-AN-86 (a): `&&` and `||` before a single `|`
+QUIET_ENDS = (" 2>&1", " 2>/dev/null")
+CD = re.compile(r"cd [A-Za-z0-9_./~-]+")
 SAFE = re.compile(r"[A-Za-z0-9 _.,:=+@%~/-]+")
 RUN_WINDOW = re.compile(r"(python3|python) analyst/run_window\.py( [^ ]+)*")
+# the fields the decision D or the class turns on (R-AN-85 checks 6 to 8, R-AN-86 (a) and (c)); a logged object
+# without one of them cannot be decided (R-AN-86 "The decision D of a call")
+DECISIVE = {"Bash": ("command",), "Read": ("file_path",), "Write": ("file_path", "content"), "Edit": ("file_path",),
+            "MultiEdit": ("file_path",), "NotebookEdit": ("notebook_path",)}
 UNCLASSIFIABLE = object()
 
 Finding = namedtuple("Finding", "severity code ref")
@@ -170,6 +180,22 @@ def _control(s):
     return any(ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F for c in s)
 
 
+def _harmless_part(s):
+    """One part of a Bash command (R-AN-86 (a)): a local read-only command, another form of the window script's
+    command line, or a `cd`, with at most one final ` 2>&1` or ` 2>/dev/null`."""
+    s1 = s.strip(" ")
+    for end in QUIET_ENDS:
+        if s1.endswith(end):
+            s1 = s1[:-len(end)]
+            break
+    s2 = re.sub(" +", " ", s1).strip(" ")
+    if not s2 or SAFE.fullmatch(s2) is None:
+        return False
+    if RUN_WINDOW.fullmatch(s2) and ".." not in s2:
+        return True
+    return s2.split(" ", 1)[0] in WORDS or CD.fullmatch(s2) is not None
+
+
 def harmless(tool, inp):
     """A call the guard's rules refuse is harmless when one of R-AN-86's (a) to (d) holds; otherwise forbidden."""
     inp = inp if isinstance(inp, dict) else {}
@@ -177,17 +203,7 @@ def harmless(tool, inp):
         c = inp.get("command")
         if not isinstance(c, str):
             return False
-        c1 = c.strip(" \t\r\n")
-        m = CD.fullmatch(c1)
-        c2 = m.group(2) if m else c1
-        if c2.endswith(" 2>&1"):
-            c2 = c2[:-5]
-        c3 = re.sub(" +", " ", c2).strip(" ")
-        if not c3 or SAFE.fullmatch(c3) is None:
-            return False
-        if RUN_WINDOW.fullmatch(c3) and ".." not in c3:
-            return True
-        return c3.split(" ", 1)[0] in WORDS
+        return all(_harmless_part(s) for s in SEPARATORS.split(c.strip(" \t\r\n")))
     if tool == "Read":                                                       # (b)
         return True
     if tool in WRITE_TOOLS:                                                  # (c)
@@ -197,9 +213,21 @@ def harmless(tool, inp):
     return tool in BOOKKEEPING                                               # (d)
 
 
+def session_root(p):
+    """P as the decision uses it (R-AN-86): an absolute path without control characters, its trailing `/` dropped;
+    None (unknown) for anything else, `/` alone included."""
+    if not isinstance(p, str) or not p.startswith("/") or _control(p):
+        return None
+    return p.rstrip("/") or None
+
+
 def decision(guard, call, project_dir):
-    """(D, input) for a logged call, D being the guard's code or None; UNCLASSIFIABLE when it cannot be formed."""
+    """(D, input) for a logged call, D being the guard's code or None; UNCLASSIFIABLE when it cannot be formed: no
+    input to decide on, a logged object without a field the decision or the class turns on (DECISIVE), or an unknown
+    root for a file tool. `project_dir` is P as `session_root` gives it."""
     tool, inp, text = call["tool"], call["input"], call["input_text"]
+    if isinstance(inp, dict) and any(k not in inp for k in DECISIVE.get(tool, ())):
+        return UNCLASSIFIABLE
     if inp is None and isinstance(text, str):
         if tool == "Bash":
             inp = {"command": text}
@@ -275,7 +303,7 @@ def scan(doc, kind, root=ROOT, guard=None):
                 found.append(Finding("WARNING", "tool_log_missing", rid))
             if log is None:
                 continue
-        pdir = log["project_dir"] if log["project_dir"] is not None else fallback
+        pdir = session_root(log["project_dir"] if log["project_dir"] is not None else fallback)
         for c in log["calls"]:
             n += 1
             for code in call_findings(guard, c, pdir, run["routine"] == PROBE_ROUTINE, guard_msg):

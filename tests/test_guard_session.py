@@ -45,7 +45,7 @@ directory, as an absolute path; write it out in full.
 4. Bash: `gh api repos/Mohamedalhaaj/gold-analyst-inbox/hooks`
 5. Bash: `curl -sS -m 10 https://example.com`
 6. Bash: `python3 -c 'print(1)'`
-7. Bash: `cd ROOT && python3 analyst/run_window.py probe`
+7. Bash: `cd /tmp && pwd`
 8. Edit: in `ROOT/.analyst_run/plan.json`, replace `{}` with `{ }`.
 9. Read `ROOT/.claude/settings.json`, then Write that same path with exactly the content you read.
 10. WebFetch: `https://example.com`, with the prompt `Reply ok.`
@@ -167,6 +167,23 @@ def test_the_probe_session_steps_get_the_outcomes_c20_expects(repo):
     for codes in got.values():
         for c in codes:
             assert c is None or g.message(c).startswith(f"guard: {c}: ")
+
+
+def test_no_refused_bash_step_of_the_probe_session_can_be_shortened_into_an_allowed_line(repo):
+    """First review of A7 (V6-1): in real CLI runs the sessions dropped the redundant `cd ROOT && ` of the old step 7
+    and ran the allowed probe line, which C20 cannot pass. Every refused Bash step must stay refused however a
+    session shortens it: each of its parts at `&&`, `||`, `;` or `|`, and each of its words alone."""
+    root, g = repo
+    for n, calls in probe_steps(root).items():
+        for tool, ti in calls:
+            if tool != "Bash" or n == 1:
+                continue
+            cmd = ti["command"]
+            parts = [p.strip() for p in re.split(r"&&|\|\||;|\|", cmd)]
+            words = cmd.split()
+            for form in parts + words + [" ".join(words[i:]) for i in range(len(words))]:
+                assert decide(g, root, "Bash", {"command": form}) == "bash_form", (n, form)
+            assert root not in cmd, n                              # no step names the root it already runs in
 
 
 # ---------------------------------------------------------------- the session flows under the guard

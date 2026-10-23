@@ -41,7 +41,10 @@ advice and it never trades. Nobody has shown that the analyst has an edge; the e
 - The run-log scan (register R-AN-86, owner tool): `python3 analyst/jobs/scan_runs.py analyst/runs/<iso_week>.json`
   (or a C20 record) classifies every tool call of the week's runs with the guard's own rules and prints
   `<VIOLATION|WARNING> <code> <run_id>#<seq>` lines and `scan <violations> <warnings> <calls>`; exit 3 on any
-  VIOLATION, 1 for a file that breaks the schema (Write and Edit text must be copied as hashes, never as text).
+  VIOLATION, 1 for a file that breaks the schema (Write and Edit text must be copied as hashes, never as text). A
+  field the run log does not show is left out of the call's input; a call whose input lacks a field the rules need
+  (Bash `command`, a file tool's path, Write's `content`) is `scan_unclassifiable`, a WARNING. A chain of harmless
+  commands (`cat x; ls`, `cat x | head`) is a harmless near-miss, as a `cd` prefix is.
 - `analyst/MODE.json` selects `canary` (records under `analyst/canary/`, never settled or shown), `live` or `off`.
 
 ## Layout
