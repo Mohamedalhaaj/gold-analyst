@@ -1,0 +1,344 @@
+{
+ "check": "C7",
+ "comment_times_equal": true,
+ "functional_retest": {
+  "credential": "owner (gh OAuth, admin)",
+  "inbox_repo_id": 1430863697,
+  "results": {
+   "branch_outside_claude": "refused GH013",
+   "force_push_claude_branch": "refused GH013",
+   "push_main": "refused GH013",
+   "rest_delete_claude_branch": "refused 422 rule violation",
+   "rest_tag_create": "refused 422",
+   "tag_push": "refused GH013"
+  },
+  "state_after": {
+   "branches": [
+    "claude/probe-ok-1",
+    "claude/probe-wf-owner",
+    "main"
+   ],
+   "main": "f69e24a",
+   "tags": 0
+  },
+  "utc": "2026-10-24T02:29Z"
+ },
+ "merge_run": {
+  "commit": "91a52ec",
+  "event": "workflow_dispatch",
+  "id": 40055633417
+ },
+ "pins": {
+  "commit": "8eae3db",
+  "inbox_from_utc": "2026-10-24T02:40:00Z",
+  "inbox_repo_id": 1430863697
+ },
+ "recorded_by": "owner (Claude session on the owner's Mac, owner credential), client approval 2026-10-24",
+ "recorded_utc": "2026-10-24T02:49:00Z",
+ "result": "pass (owner part)",
+ "schema": "analyst-check-c7/1",
+ "session_probes": "workflow_push, force_main and admin_probe are session probes: recorded by the probe session (C20, analyst/canary/checks/PROBE_<tag>.json)",
+ "set_up_reads": {
+  "app_installation": {
+   "app": "Claude (anthropics)",
+   "how": "github.com/settings/installations/164402563 after the owner's GitHub Mobile confirmation; set by Claude in Chrome at the owner's request, then claude.ai 'Finish connecting GitHub'",
+   "installation_id": 164402563,
+   "permissions": "read: administration, commit statuses, merge queues, metadata; read+write: actions, checks, code, discussions, issues, pull requests, repository hooks, workflows",
+   "read_utc": "2026-10-24T02:35Z",
+   "repositories": [
+    "Mohamedalhaaj/gold-analyst-inbox"
+   ],
+   "repository_selection": "selected"
+  },
+  "ga_actions_workflow_permissions": {
+   "can_approve_pull_request_reviews": false,
+   "default_workflow_permissions": "read"
+  },
+  "ga_deploy_keys": [
+   {
+    "id": 167402411,
+    "read_only": false,
+    "title": "analyst-mirror (gold-forward-watch analyst-export)"
+   }
+  ],
+  "ga_environments": {
+   "analyst-inbox": {
+    "branch_policies": [
+     {
+      "name": "main",
+      "type": "branch"
+     }
+    ],
+    "deployment_branch_policy": {
+     "custom_branch_policies": true,
+     "protected_branches": false
+    },
+    "secrets": [
+     "INBOX_MIRROR_KEY"
+    ],
+    "variables": []
+   },
+   "analyst-pages": {
+    "branch_policies": [
+     {
+      "name": "main",
+      "type": "branch"
+     }
+    ],
+    "deployment_branch_policy": {
+     "custom_branch_policies": true,
+     "protected_branches": false
+    },
+    "secrets": [
+     "CLOUDFLARE_API_TOKEN"
+    ],
+    "variables": [
+     "CLOUDFLARE_ACCOUNT_ID"
+    ]
+   }
+  },
+  "ga_main_protection": {
+   "allow_deletions": false,
+   "allow_force_pushes": false,
+   "enforce_admins": true
+  },
+  "ga_rulesets": [
+   {
+    "bypass_actors": [],
+    "conditions": {
+     "ref_name": {
+      "exclude": [
+       "refs/heads/main"
+      ],
+      "include": [
+       "~ALL"
+      ]
+     }
+    },
+    "enforcement": "active",
+    "id": 25712706,
+    "name": "ga-no-branch-but-main",
+    "rules": [
+     "creation"
+    ],
+    "target": "branch"
+   },
+   {
+    "bypass_actors": [
+     {
+      "actor_id": 5,
+      "actor_type": "RepositoryRole",
+      "bypass_mode": "always"
+     }
+    ],
+    "conditions": {
+     "ref_name": {
+      "exclude": [],
+      "include": [
+       "~ALL"
+      ]
+     }
+    },
+    "enforcement": "active",
+    "id": 25712704,
+    "name": "ga-tags-create-admin-only",
+    "rules": [
+     "creation"
+    ],
+    "target": "tag"
+   },
+   {
+    "bypass_actors": [],
+    "conditions": {
+     "ref_name": {
+      "exclude": [],
+      "include": [
+       "~ALL"
+      ]
+     }
+    },
+    "enforcement": "active",
+    "id": 25712703,
+    "name": "ga-tags-immutable",
+    "rules": [
+     "update",
+     "deletion"
+    ],
+    "target": "tag"
+   }
+  ],
+  "inbox_actions_permissions": {
+   "enabled": false,
+   "sha_pinning_required": false
+  },
+  "inbox_deploy_keys": [
+   {
+    "id": 167410020,
+    "read_only": false,
+    "title": "analyst-inbox-mirror (gold-analyst)"
+   }
+  ],
+  "inbox_hooks": [],
+  "inbox_repo_id": 1430863697,
+  "inbox_rulesets": [
+   {
+    "bypass_actors": [],
+    "conditions": {
+     "ref_name": {
+      "exclude": [],
+      "include": [
+       "refs/heads/claude/**"
+      ]
+     }
+    },
+    "enforcement": "active",
+    "id": 25713125,
+    "name": "inbox-claude-append-only",
+    "rules": [
+     "deletion",
+     "non_fast_forward"
+    ],
+    "target": "branch"
+   },
+   {
+    "bypass_actors": [
+     {
+      "actor_id": null,
+      "actor_type": "DeployKey",
+      "bypass_mode": "always"
+     }
+    ],
+    "conditions": {
+     "ref_name": {
+      "exclude": [],
+      "include": [
+       "~DEFAULT_BRANCH"
+      ]
+     }
+    },
+    "enforcement": "active",
+    "id": 25713123,
+    "name": "inbox-main-locked",
+    "rules": [
+     "update",
+     "deletion",
+     "non_fast_forward"
+    ],
+    "target": "branch"
+   },
+   {
+    "bypass_actors": [],
+    "conditions": {
+     "ref_name": {
+      "exclude": [],
+      "include": [
+       "~ALL"
+      ]
+     }
+    },
+    "enforcement": "active",
+    "id": 25713129,
+    "name": "inbox-no-tags",
+    "rules": [
+     "creation",
+     "update",
+     "deletion"
+    ],
+    "target": "tag"
+   },
+   {
+    "bypass_actors": [],
+    "conditions": {
+     "ref_name": {
+      "exclude": [
+       "refs/heads/main",
+       "refs/heads/claude/**"
+      ],
+      "include": [
+       "~ALL"
+      ]
+     }
+    },
+    "enforcement": "active",
+    "id": 25713124,
+    "name": "inbox-only-claude-branches",
+    "rules": [
+     "creation",
+     "update",
+     "deletion",
+     "non_fast_forward"
+    ],
+    "target": "branch"
+   }
+  ],
+  "read_utc": "2026-10-24T02:28Z",
+  "repo_level_secrets_vars": {
+   "gold_analyst": [
+    0,
+    0
+   ],
+   "inbox": [
+    0,
+    0
+   ]
+  }
+ },
+ "tamper_pushes": [
+  {
+   "after": "e039777",
+   "content": "adds analyst/c7_extra.json (outside the allowlist)",
+   "pushed_utc": "2026-10-24T02:47:09Z",
+   "ref": "refs/heads/claude/analyst-c7-extra",
+   "witness": {
+    "comment_id": 6378929885,
+    "created_at": "2026-10-24T02:47:31Z",
+    "kind": "push",
+    "reason": "agent_scope",
+    "seq": 1,
+    "status": "rejected",
+    "updated_at": "2026-10-24T02:47:31Z"
+   }
+  },
+  {
+   "after": "1d7367a",
+   "content": "modifies analyst/MODE.json (a modification)",
+   "pushed_utc": "2026-10-24T02:47:18Z",
+   "ref": "refs/heads/claude/analyst-c7-modify",
+   "witness": {
+    "comment_id": 6378930013,
+    "created_at": "2026-10-24T02:47:32Z",
+    "kind": "push",
+    "reason": "agent_scope",
+    "seq": 2,
+    "status": "rejected",
+    "updated_at": "2026-10-24T02:47:32Z"
+   }
+  }
+ ],
+ "webhook_test": {
+  "active": false,
+  "created_utc": "2026-10-24T02:29:15Z",
+  "deleted_utc": "2026-10-24T02:29:16Z",
+  "events": [
+   "push"
+  ],
+  "hook_id": 702387674,
+  "result": "the security log records both events, so detection 2 counts hook events weekly from PINS.inbox_from_utc",
+  "security_log_filter": "repo:Mohamedalhaaj/gold-analyst-inbox action:hook",
+  "security_log_hook_events": [
+   {
+    "action": "hook.create",
+    "actor": "Mohamedalhaaj",
+    "created_utc": "2026-10-24T02:29:14Z",
+    "note": "Installed webhook for Mohamedalhaaj/gold-analyst-inbox with push events"
+   },
+   {
+    "action": "hook.destroy",
+    "actor": "Mohamedalhaaj",
+    "created_utc": "2026-10-24T02:29:16Z",
+    "note": "Uninstalled webhook for Mohamedalhaaj/gold-analyst-inbox"
+   }
+  ],
+  "url": "https://example.com/"
+ }
+}
