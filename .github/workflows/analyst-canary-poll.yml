@@ -20,6 +20,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
+      - name: Run guard (main only)
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then echo "guard: not refs/heads/main"; exit 1; fi
+
       - uses: actions/checkout@v4
         with:
           ref: main

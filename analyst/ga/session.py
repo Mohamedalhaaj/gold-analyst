@@ -1,22 +1,28 @@
-"""The routine session steps: start, context, lock, lesson-start/lock, revision-start/lock (prereg R1, R3, §3, §5;
-register R-AN-24..R-AN-31, R-AN-48, R-AN-49, R-AN-71). FROZEN.
+"""The routine session steps: start, context, lock, lesson-start/lock, revision-start/lock, probe (prereg R1, R3, §3,
+§5; register R-AN-24..R-AN-31, R-AN-48, R-AN-49, R-AN-71, R-AN-84, §16.18 A6). FROZEN.
 
-Only enums, ids, hashes and paths are printed; no model text reaches stdout, a commit message or a shell argument.
-Inputs are read at origin/main (repo_head_sha) through git, never from the working tree. Exit codes: 0 done or a clean
-refusal, 1 a technical failure, 2 an invalid plan/lesson/playbook that the agent may fix and lock again.
+Only enums, ids, hashes and paths are printed (and, in `probe`'s line, the record's `cc_version`, the first line of
+`claude --version`); no model text reaches stdout, a commit message or a shell argument.
+Inputs are read at origin/main (repo_head_sha) through git, never from the working tree. Since §16.18 A6 origin is
+the agent inbox: its main is a gold-analyst main commit, one mirror run behind at most, and analyst-merge witnesses
+pushes on a schedule. No step waits for a witness: an attempt branch in the inbox that no witness on origin/main
+names, and that this session did not push itself, is a draw in progress (R-AN-24, `concurrent`). Exit codes: 0 done
+or a clean refusal, 1 a technical failure, 2 an invalid plan/lesson/playbook that the agent may fix and lock again;
+`probe`: 0 pass, 4 fail, 5 incomplete, 1 a technical failure.
 """
 import datetime as dt
 import json
 import os
+import re
 import time
 from pathlib import Path
 
-from . import clock, context, gitops, hours, memory, paths, plan, rec, records, tables, witness
+from . import clock, context, gitops, hours, memory, paths, plan, probes, rec, records, tables, witness
 from .repo import GitView
 
 WORK_DIRNAME = ".analyst_run"
 MAX_FAILURES = 3
-PROBE_TIMEOUT_S = 8
+PROBE_EXIT = {"pass": 0, "fail": 4, "incomplete": 5}
 
 
 class Refusal(Exception):
@@ -27,12 +33,15 @@ class Refusal(Exception):
 
 class Session:
     def __init__(self, repo_dir, git=None, now=None, http_get=None, mono=time.monotonic, sleep=time.sleep,
-                 env=None, work_dir=None, view_factory=None, probe_get=None, cc_version=None, out=print):
+                 env=None, work_dir=None, view_factory=None, probe_get=None, cc_version=None, out=print, gh=None,
+                 direct_url=None):
         self.repo_dir = Path(repo_dir)
         self.git = git or gitops.Git(repo_dir)
         self.now = now or (lambda: dt.datetime.now(rec.UTC).replace(microsecond=0))
         self.http_get = http_get or hours.urllib_get
         self.probe_get = probe_get or hours.urllib_get
+        self.gh = gh or probes.run_gh
+        self.direct_url = direct_url or probes.direct_url
         self.mono, self.sleep = mono, sleep
         self.env = os.environ if env is None else env
         self.work = Path(work_dir) if work_dir else self.repo_dir / WORK_DIRNAME
@@ -52,10 +61,49 @@ class Session:
         self.work.mkdir(parents=True, exist_ok=True)
         self._state_path().write_text(json.dumps(st, indent=1, sort_keys=True), "utf-8")
 
-    def _selfrep(self, key):
+    def _cc_version(self):
+        """The session's Claude Code version, read once per step by records.cc_version (the first line of
+        `claude --version`; None when it is absent, fails or takes more than 10 s): the attempt and call records'
+        `self_reported.cc_version` and, since the third review of §16.18 A7 (decision 22), the probe record's
+        `cc_version` (R-AN-25, R-AN-84, R-AN-85 "Claude Code version")."""
         if self.cc_version is None:
             self.cc_version = records.cc_version() or ""
-        return records.self_report(self.now(), key, self.env, self.cc_version or None)
+        return self.cc_version or None
+
+    def _selfrep(self, key):
+        return records.self_report(self.now(), key, self.env, self._cc_version())
+
+    def _pushed_path(self):
+        return self.work / "pushed.json"
+
+    def own_commits(self):
+        """Every commit this session has pushed (its scratch state, kept apart from state.json, which each start
+        step rewrites)."""
+        p = self._pushed_path()
+        try:
+            return set(json.loads(p.read_text("utf-8"))) if p.exists() else set()
+        except ValueError:
+            return set()
+
+    def _note_own(self, commit):
+        own = self.own_commits() | {commit}
+        self.work.mkdir(parents=True, exist_ok=True)
+        self._pushed_path().write_text(json.dumps(sorted(own)), "utf-8")
+
+    def in_flight(self, view, mode, draw_id):
+        """True when the inbox holds an attempt branch of `draw_id` (`claude/analyst-<mode>-attempt-<draw_id>-<n>`,
+        R-AN-31) whose head is the `push.after` of no witness on origin/main (accepted, rejected or duplicate) and
+        is not a commit this session pushed: a draw in progress that analyst-merge has not witnessed yet, or whose
+        witness has not reached the inbox (R-AN-24, §16.18 A6). Raises gitops.GitError when the inbox cannot be
+        listed."""
+        name = f"refs/heads/claude/analyst-{mode}-attempt-{draw_id}-"
+        rx = re.compile(re.escape(name) + r"[0-9]+")
+        listed = [(sha, ref) for sha, ref in self.git.ls_remote_heads(f"{name}*") if rx.fullmatch(ref)]
+        if not listed:
+            return False
+        named = {(w.get("push") or {}).get("after") for m in ("live", "canary") for w in witness.witnesses(view, m)}
+        own = self.own_commits()
+        return any(sha not in named and sha not in own for sha, _ref in listed)
 
     def _push(self, base, path, data, branch, until, st=None, key=None):
         """Push one new file on a new branch, retrying the same commit until `until` (aware UTC)."""
@@ -65,6 +113,7 @@ class Session:
             if st is not None and key:
                 st[key] = commit
                 self._save_state(st)
+        self._note_own(commit)
         while True:
             ok, _ = self.git.push(commit, branch)
             if ok:
@@ -86,6 +135,9 @@ class Session:
         except Refusal as r:
             self.out(f"refused {r.code}")
             return 0
+        except gitops.GitError:
+            self.out("error inbox_branches")
+            return 1
         frozen = records.frozen_block(view)
         doc = records.attempt("call", mode, w.call_id, n, w.call_id, head, frozen, self._selfrep("started_utc"))
         path = paths.attempt_path(mode, w.call_id, n)
@@ -131,6 +183,8 @@ class Session:
         lim = rec.iso(now - dt.timedelta(minutes=int(params["concurrency_min"])))
         if any((a_.get("window") or {}).get("time_utc", "") > lim for a_ in acc):
             raise Refusal("concurrent")
+        if self.in_flight(view, mode, w.call_id):
+            raise Refusal("concurrent")
         return w, len(acc) + 1
 
     # ------------------------------------------------------------ context (R-AN-14..R-AN-23)
@@ -152,10 +206,10 @@ class Session:
         ctx = context.build(view, head, mode, w, asof, params, fetcher)
         sha = context.context_sha256(ctx)
         st.update(context_sha256=sha, repo_head_sha=head, failures=0)
-        if mode == "canary":
-            st["canary_probe"] = self.probes(head, w, fetched=ctx["files"])
         self.work.mkdir(parents=True, exist_ok=True)
         (self.work / "context.json").write_bytes(rec.record_bytes(ctx))
+        if mode == "canary":                       # after the context file (R-AN-84); live calls never probe
+            st["canary_probe"] = self.run_probes(view, head, "canary", w.call_id, fetched=ctx["files"])
         self._save_state(st)
         if ctx["status"] != "ok":
             return self._finish_call(st, ctx, ctx["status"], None, None)
@@ -223,32 +277,45 @@ class Session:
         self.out(f"locked {w.call_id} status={status}")
         return 0
 
-    # ------------------------------------------------------------ canary probes (R-AN-71, C5-C7)
-    def probes(self, head, w, fetched=()):
-        net = {"dukascopy": any(f.get("http", 0) != 0 for f in fetched)}
-        for name, u in (("google", "https://www.google.com"), ("api_github", "https://api.github.com"),
-                        ("raw_gfw", "https://raw.githubusercontent.com/Mohamedalhaaj/gold-forward-watch/HEAD/"
-                                    "README.md")):
-            code, _ = self.probe_get(u, PROBE_TIMEOUT_S)
-            net[name] = int(code)
+    # ------------------------------------------------------------ probes (R-AN-71, R-AN-84; C5-C7)
+    def run_probes(self, view, head, kind, tag, fetched=None):
+        """The R-AN-84 probes against origin (the inbox), as an `analyst-probe/1` record. A canary context bounds the
+        set at 120 s. Both kinds of the record also hold `cc_version`, the session's Claude Code version (third
+        review of §16.18 A7, decision 22), read after the probes: it is not a probe, so it is in neither `outcomes`
+        nor `pass`, and the verdict and the exit code do not depend on it."""
+        inbox = (paths.read_pins(view) or {}).get("inbox_repo")
+        res = probes.Prober(self.git, self.gh, self.probe_get, self.mono, self.sleep, self.now, inbox, head, kind,
+                            tag, direct=self.direct_url, fetched=fetched,
+                            budget_s=probes.CANARY_BUDGET_S if kind == "canary" else None).run()
+        res["cc_version"] = self._cc_version()
+        return res
+
+    def probe(self):
+        """`run_window.py probe` (R-AN-84): the probes with no window, ignoring mode and time. It writes the record
+        to .analyst_run/probe.json, pushes it as probes/<tag>.json on claude/probe-result-<tag> (one new commit on
+        origin/main), and prints `probe_<verdict> ` and the record's compact form."""
+        t = self.now()
+        tag = "p" + t.strftime("%Y%m%dT%H%M%SZ")
         try:
-            net["ls_remote_gfw"] = bool(self.git.ls_remote_ok("https://github.com/Mohamedalhaaj/gold-forward-watch"))
+            head = self.git.fetch_main()
+            view = self.view_factory(head)
         except Exception:  # noqa: BLE001
-            net["ls_remote_gfw"] = False
-        out = {"network": net}
+            self.out("error fetch")
+            return 1
+        res = self.run_probes(view, head, "probe", tag)
+        body = rec.record_bytes(res)
+        self.work.mkdir(parents=True, exist_ok=True)
+        (self.work / "probe.json").write_bytes(body)
         try:
-            tree = self.git.tree_of(head)
-            c1 = self.git.commit_tree(tree, [head], "canary probe push_main (must be refused)")
-            out["push_main"] = "accepted" if self.git.push(c1, "main")[0] else "refused"
-            wf = b"name: probe\non:\n  workflow_dispatch:\njobs:\n  p:\n    runs-on: ubuntu-latest\n    steps:\n" \
-                 b"      - run: echo probe\n"
-            c2 = self.git.commit_one_file(head, ".github/workflows/probe.yml", wf, "canary probe workflow_push")
-            out["workflow_push"] = "accepted" if self.git.push(c2, f"claude/probe-wf-{w.call_id}")[0] else "refused"
-            c3 = self.git.commit_tree(tree, [self.git.first_parent(head)], "canary probe force_main (must be refused)")
-            out["force_main"] = "accepted" if self.git.push(c3, "main", force=True)[0] else "refused"
+            ok = self._push(head, f"probes/{tag}.json", body, f"claude/probe-result-{tag}",
+                            self.now() + dt.timedelta(minutes=3))
         except Exception:  # noqa: BLE001
-            out["git_probe_error"] = True
-        return out
+            ok = False
+        self.out(f"probe_{res['verdict']} {rec.compact(res)}")
+        if not ok:
+            self.out("error probe_push")
+            return 1
+        return PROBE_EXIT[res["verdict"]]
 
     # ------------------------------------------------------------ lessons (R-AN-48, R-AN-71)
     def lesson_start(self):
@@ -274,6 +341,12 @@ class Session:
             n_acc = len(witness.accepted_attempts(view, mode, f"lesson-{cid}"))
             if max(n_acc, pushed.get(cid, 0)) >= 2:
                 continue
+            try:
+                if self.in_flight(view, mode, f"lesson-{cid}"):
+                    continue                       # another session's lesson draw, not witnessed yet
+            except gitops.GitError:
+                self.out("error inbox_branches")
+                return 1
             cand = (cid, view.read(p))
             break
         if cand is None:
@@ -367,6 +440,13 @@ class Session:
             return 0
         k = weekly.newest_playbook(view, mode)
         draw = f"revision-v{k + 1}"
+        try:
+            if self.in_flight(view, mode, draw):
+                self.out("refused concurrent")
+                return 0
+        except gitops.GitError:
+            self.out("error inbox_branches")
+            return 1
         st = self._load_state() or {}
         n = max(len(witness.accepted_attempts(view, mode, draw)), st.get("revision_pushed", 0)) + 1
         if n > 2:

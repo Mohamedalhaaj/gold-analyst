@@ -1,5 +1,6 @@
 # analyst-track (prereg R8; register R-AN-65): provisional hourly tracking of one paper trade, display only.
-# Dispatched by analyst-merge after a buy or sell lock (no schedule trigger). It sleeps until each hour file is due
+# Dispatched by analyst-merge or analyst-settle after a buy or sell lock (no schedule trigger; main only). It holds
+# no environment and no secret. It sleeps until each hour file is due
 # (h + 1 h + L), commits site/track/<call_id>.json and dispatches analyst-deploy; it never holds the Cloudflare token.
 name: analyst-track
 
@@ -24,6 +25,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 330
     steps:
+      - name: Run guard (main only)
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then echo "guard: not refs/heads/main"; exit 1; fi
+
       - uses: actions/checkout@v4
         with:
           ref: main

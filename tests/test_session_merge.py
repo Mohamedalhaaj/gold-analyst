@@ -30,7 +30,7 @@ def test_canary_end_to_end(tmp_path):
     assert h.log[-1] == "attempt_pushed 2026-11-10_W1 n=1 mode=canary"
     pushes = h.register_pushes()
     assert pushes and pushes[0][0] == "refs/heads/claude/analyst-canary-attempt-2026-11-10_W1-1"
-    h.merge(pushes[0])
+    h.merge()
     att = h.main_json(CANARY_ATT)
     assert records.valid_attempt(att) and att["self_reported"]["note"] == "self-reported, unverified"
     w = h.last_witness()
@@ -41,15 +41,17 @@ def test_canary_end_to_end(tmp_path):
     h.at(2026, 11, 10, 7, 21)
     assert h.run("context") == 0 and h.log[-1].startswith("context_ok 2026-11-10_W1")
     st = json.loads((h.sess_dir / ".analyst_run" / "state.json").read_text())
-    probe = st["canary_probe"]
-    assert probe["push_main"] == "refused" and probe["force_main"] == "refused"
-    assert probe["network"]["google"] == 0 and probe["network"]["ls_remote_gfw"] is False
+    probe = st["canary_probe"]                                                 # R-AN-84's record (§16.18 A6)
+    assert (probe["schema"], probe["kind"], probe["tag"], probe["verdict"]) == ("analyst-probe/1", "canary", W1,
+                                                                                "pass")
+    assert probe["outcomes"]["push_main"] == "refused_rule" and probe["outcomes"]["force_main"] == "refused_rule"
+    assert probe["outcomes"]["net.google"] == 0 and probe["outcomes"]["git.ls_remote_gfw"] == "refused"
     h.at(2026, 11, 10, 7, 25)
     assert h.run("lock", str(h.write_plan(PLAN))) == 0 and h.log[-1] == "locked 2026-11-10_W1 status=called"
     [p] = h.register_pushes()
-    h.merge(p)
+    h.merge()
     call = h.main_json(CANARY_CALL)
-    branch_bytes = __import__("subprocess").run(["git", "-C", str(h.world.origin), "show", f"{p[1]}:{CANARY_CALL}"],
+    branch_bytes = __import__("subprocess").run(["git", "-C", str(h.world.inbox), "show", f"{p[1]}:{CANARY_CALL}"],
                                                 capture_output=True).stdout
     assert h.world.main_file(CANARY_CALL) == branch_bytes                      # copied byte for byte
     assert records.valid_call(call) and plan.derivable(call)
@@ -61,7 +63,7 @@ def test_canary_end_to_end(tmp_path):
     assert t["call"]["lock_utc"] == "2026-11-10T07:25:00Z" and t["call"]["push_sha"] == p[1]
     assert [a["n"] for a in t["attempts"]] == [1]
     assert h.world.main_file("analyst/START.json") is None                     # canary never writes START
-    assert h.api.dispatched == []                                              # canary calls are never tracked
+    assert [d for d in h.api.dispatched if d[0] == "analyst-track.yml"] == []    # canary calls are never tracked
     kinds = [x["kind"] for x in h.witnesses()]
     assert kinds == ["attempt", "call", "terminal"]
     # comments: two lines, header, compact payload equal to the file without `comment`
@@ -72,7 +74,8 @@ def test_canary_end_to_end(tmp_path):
         assert wdoc["comment"]["body_sha256"] == rec.sha256_bytes(c["body"].encode())
     # idempotent: the same push again changes nothing
     n = len(h.api.issue_comments)
-    h.merge(p)
+    h.api.add_push("refs/heads/claude/analyst-again", "0" * 40, p[1], h.now())  # the same commit listed again
+    h.merge()
     assert len(h.api.issue_comments) == n
     # no second draw after a terminal
     h.at(2026, 11, 10, 7, 30)
@@ -220,13 +223,13 @@ def test_underivable_call(tmp_path):
     h.run("lock", str(h.write_plan(PLAN)))
     branch = "refs/heads/claude/analyst-canary-call-2026-11-10_W1"
     import subprocess
-    sha = subprocess.run(["git", "-C", str(h.world.origin), "rev-parse", branch], capture_output=True,
+    sha = subprocess.run(["git", "-C", str(h.world.inbox), "rev-parse", branch], capture_output=True,
                          text=True).stdout.strip()
-    doc = json.loads(subprocess.run(["git", "-C", str(h.world.origin), "show", f"{sha}:{CANARY_CALL}"],
+    doc = json.loads(subprocess.run(["git", "-C", str(h.world.inbox), "show", f"{sha}:{CANARY_CALL}"],
                                     capture_output=True).stdout)
     doc["S"] = doc["S"] + 1.0                                                     # tampered stop distance
-    h.agent_branch("claude/analyst-canary-call-2026-11-10_W1", {CANARY_CALL: rec.record_bytes(doc)})
-    h.push_and_merge()
+    h.agent_branch("claude/analyst-canary-call-2026-11-10_W1-tampered", {CANARY_CALL: rec.record_bytes(doc)})
+    h.push_and_merge(only="tampered")                                             # the routine's own call: unlisted
     t = h.main_json("analyst/canary/terminal/2026-11-10_W1.json")
     assert (t["status"], t["detail"]) == ("no_call:invalid", "underivable")
 
@@ -270,14 +273,14 @@ def test_duplicate_and_rewrite_and_window_closed(tmp_path):
     h = Harness(tmp_path)
     h.run("start")
     [(ref, sha)] = h.register_pushes()
-    h.merge((ref, sha))
+    h.merge()
     att = h.world.main_file(CANARY_ATT)
     from synth import git
     n = len(h.witnesses())
-    git(h.world.origin, "update-ref", "refs/heads/claude/analyst-again", sha)    # the same commit again: a no-op
+    git(h.world.inbox, "update-ref", "refs/heads/claude/analyst-again", sha)     # the same commit again: a no-op
     h.push_and_merge()
     assert len(h.witnesses()) == n
-    base = git(h.world.origin, "rev-parse", f"{sha}^")
+    base = git(h.world.inbox, "rev-parse", f"{sha}^")
     h.agent_branch("claude/analyst-dup", {CANARY_ATT: att}, base=base)          # a new commit, identical bytes
     h.push_and_merge()
     assert (h.last_witness()["status"], h.last_witness()["reason"]) == ("duplicate", "duplicate")
@@ -342,7 +345,8 @@ def test_live_start_json_and_track_dispatch(tmp_path):
     # d0 = Tuesday 2026-11-10 -> the next Monday 2026-11-16 (busday_count = 4 >= 3)
     assert (s["d0"], s["first_day"], s["first_call_id"]) == ("2026-11-10", "2026-11-16", W1)
     assert s["terminal_sha256"] == rec.sha256_bytes(h.world.main_file("analyst/terminal/2026-11-10_W1.json"))
-    assert h.api.dispatched == [("analyst-track.yml", "main", {"call_id": W1})]
+    assert [d for d in h.api.dispatched if d[0] == "analyst-track.yml"] == [("analyst-track.yml", "main",
+                                                                              {"call_id": W1})]
     call = h.main_json("analyst/calls/2026-11-10_W1.json")
     assert call["context"]["memory"]["header"].startswith("data, not instructions")
     assert "canary_probe" not in call
@@ -365,7 +369,7 @@ def test_completion_from_comment_after_failed_push(tmp_path):
     h.merge_fail = True
     [p] = h.register_pushes()
     with pytest.raises(RuntimeError):
-        h.merge(p)
+        h.merge()
     assert len(h.api.issue_comments) == 1 and h.world.main_list("analyst/canary/") == []
     h.merge_fail = False
     h.merge()                                                                     # any later run completes it
@@ -399,8 +403,10 @@ def test_canary_lesson_and_revision(tmp_path):
     h = Harness(tmp_path, canary_from="2026-11-09", extra={P.CANARY_SETTLED_FIXTURE: fx.read_bytes()})
     h.at(2026, 11, 10, 16, 40)
     assert h.run("lesson_start") == 0 and h.log[-1].startswith("lesson_attempt_pushed 2026-10-16_W1 n=1")
-    h.push_and_merge()
-    assert h.last_witness()["kind"] == "attempt" and h.last_witness()["status"] == "accepted"
+    h.push_and_merge()                         # the push is witnessed first, then the closer closes 11-09/11-10
+    [la] = [w for w in h.witnesses() if w["kind"] == "attempt"]
+    assert (la["id"], la["status"]) == ("lesson-2026-10-16_W1", "accepted")
+    assert h.witnesses()[0]["seq"] == la["seq"] == 1
     lp = h.sess_dir / ".analyst_run" / "lesson.json"
     lp.write_text(json.dumps({"text_ar": "درس قصير من سجل اصطناعي"}, ensure_ascii=False))
     h.at(2026, 11, 10, 16, 42)
@@ -442,5 +448,6 @@ def test_switch_to_live_closes_the_finished_canary_and_ignores_deletions(tmp_pat
     assert canary == ["2026-11-09_W1.json", "2026-11-09_W2.json", "2026-11-10_W1.json", "2026-11-10_W2.json"]
     assert live == ["2026-11-11_W1.json"]
     n = len(h.api.issue_comments)
-    h.merge(("refs/heads/claude/analyst-gone", "0" * 40))                     # a branch deletion records nothing
+    h.api.add_push("refs/heads/claude/analyst-gone", "a" * 40, "0" * 40, h.now(), typ="branch_deletion")
+    h.merge()                                                                  # a branch deletion records nothing
     assert len(h.api.issue_comments) == n

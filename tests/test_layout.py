@@ -27,10 +27,34 @@ def sha(p):
     return hashlib.sha256((ROOT / p).read_bytes()).hexdigest()
 
 
+AGENT_FILES = ("CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", ".mcp.json")
+GUARD_FILES = {".claude/settings.json", ".claude/hooks/guard.py"}
+
+
+def _tracked():
+    import subprocess
+    return subprocess.run(["git", "-C", str(ROOT), "ls-files"], capture_output=True, text=True,
+                          check=True).stdout.splitlines()
+
+
 def test_no_agent_instruction_files():
+    """R1(a), R-AN-2 as replaced by §16.18 A7: a one-repository cloud session loads CLAUDE.md, CLAUDE.local.md,
+    AGENTS.md and .mcp.json, so none may exist anywhere; `.claude/` exists only at the root (the session guard)."""
     bad = [p for p in ROOT.rglob("*") if ".venv" not in p.parts and ".git" not in p.parts
-           and (p.name in ("CLAUDE.md", "AGENTS.md") or p.name == ".claude")]
+           and (p.name in AGENT_FILES or (p.name == ".claude" and p != ROOT / ".claude"))]
     assert bad == []
+    for p in _tracked():
+        parts = p.split("/")
+        assert parts[-1] not in AGENT_FILES and ".claude" not in parts[1:], p
+
+
+def test_dot_claude_holds_only_the_guard():
+    """R-AN-2 (§16.18 A7): `.claude/` holds exactly settings.json and hooks/guard.py: no settings.local.json, skills,
+    agents, commands or rules. Bytecode caches are never written there (tests load the guard without them)."""
+    files = {p.relative_to(ROOT).as_posix() for p in (ROOT / ".claude").rglob("*") if not p.is_dir()}
+    dirs = {p.relative_to(ROOT).as_posix() for p in (ROOT / ".claude").rglob("*") if p.is_dir()}
+    assert files == GUARD_FILES and dirs == {".claude/hooks"}
+    assert {p for p in _tracked() if p.startswith(".claude/")} <= GUARD_FILES
 
 
 def test_no_judge_and_no_reports_here():
@@ -95,7 +119,8 @@ def test_manifest_lists_the_frozen_set():
                  "analyst/prompts/revision.md", "analyst/schema/plan.schema.json", "analyst/run_window.py",
                  "analyst/ga/context.py", "analyst/ga/dref.py", "analyst/ga/settle.py", "analyst/vendor/eproc.py",
                  "analyst/vendor/tzdata/__init__.py", "analyst/tables/holidays.csv", "analyst/playbooks/v0.md",
-                 "analyst/PARAMS.json", "analyst/calendars/bls_2026_2027.csv"):
+                 "analyst/PARAMS.json", "analyst/calendars/bls_2026_2027.csv", ".claude/settings.json",
+                 ".claude/hooks/guard.py", "analyst/PROBE_SESSION_PROMPT.md"):
         assert need in paths
     assert not any(p.startswith("analyst/display/") for p in paths)
 
@@ -111,15 +136,16 @@ def test_tzdata_files_match_the_wheel_record():
         assert h == "sha256=" + dig.rstrip(b"=").decode(), p
 
 
+SESSION_MODULES = ("__init__", "clock", "context", "dref", "examlock", "gitops", "hours", "memory", "paths", "plan",
+                   "probes", "rec", "records", "repo", "session", "store", "tables", "weekly", "witness")
+
+
 def test_session_modules_use_only_the_standard_library():
     """The routine session imports nothing outside the stdlib and analyst/vendor (R1 Isolation (d))."""
     import ast
     stdlib = {"argparse", "csv", "datetime", "hashlib", "io", "json", "lzma", "math", "os", "re", "shutil",
               "statistics", "struct", "subprocess", "sys", "tempfile", "time", "urllib", "zoneinfo", "pathlib"}
-    for f in ["run_window.py"] + [f"ga/{n}.py" for n in ("__init__", "clock", "context", "dref", "examlock",
-                                                           "gitops", "hours", "memory", "paths", "plan", "rec",
-                                                           "records", "repo", "session", "store", "tables",
-                                                           "weekly", "witness")]:
+    for f in ["run_window.py"] + [f"ga/{n}.py" for n in SESSION_MODULES]:
         tree = ast.parse((ROOT / "analyst" / f).read_text())
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -130,3 +156,43 @@ def test_session_modules_use_only_the_standard_library():
                 continue
             for m in mods:
                 assert m in stdlib or m in ("ga", "tzdata"), (f, m)
+
+
+BLOCKER = r"""
+import sys, importlib.abc
+class Block(importlib.abc.MetaPathFinder):
+    def find_spec(self, name, path=None, target=None):
+        if name.split(".")[0] in ("numpy", "pandas", "yaml", "pytest", "pandas_market_calendars"):
+            raise ImportError("blocked: " + name)
+        return None
+sys.meta_path.insert(0, Block())
+sys.path.insert(0, "analyst")
+before = set(sys.modules)
+import run_window
+from ga import session, probes, examlock, weekly, gitops, memory, context, hours, store, tables
+import ga.session as s
+for step in ("start", "context", "lock", "lesson_start", "lesson_lock", "revision_start", "revision_lock", "probe"):
+    assert callable(getattr(s.Session, step)), step
+std = set(sys.stdlib_module_names)
+new = sorted({m.split(".")[0] for m in set(sys.modules) - before})
+bad = [m for m in new if m not in std and not m.startswith("_sysconfigdata_")
+       and m not in ("ga", "tzdata", "run_window")]
+print("modules", " ".join(new))
+print("bad", " ".join(bad))
+for m in new:
+    f = getattr(sys.modules.get(m), "__file__", None) or ""
+    if m in ("ga", "tzdata", "run_window"):
+        assert "/analyst/" in f, (m, f)
+"""
+
+
+def test_session_steps_import_with_numpy_and_pandas_blocked():
+    """R-AN-61 (§16.18 A6): the session steps (start, context, lock, lesson-*, revision-*, lock --exam, probe) need
+    no package install: imported with numpy and pandas blocked, they load only the standard library, ga/ and the
+    vendored tzdata, so the routine network can be datafeed.dukascopy.com only with the package managers off."""
+    import subprocess
+    import sys
+    p = subprocess.run([sys.executable, "-I", "-c", BLOCKER], cwd=ROOT, capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr[-2000:]
+    bad = [l for l in p.stdout.splitlines() if l.startswith("bad")][0].strip()
+    assert bad == "bad", p.stdout

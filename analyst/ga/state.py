@@ -3,6 +3,31 @@
 E_n = eproc.e_value(y) from the vendored, byte-identical lab e-process; K = eproc.k_value over post-promotion trades;
 E* = 400 exactly (α_A = alpha_version(3) = 0.0025). Promotion needs P1-P5 and P7; demotion D1-D3; retirement n150, age,
 demoted (>= 5 weekdays after the demotion) or violation. Events are create-only latches.
+
+The pause rule (R-AN-55 as amended in the fourth and sixth reviews of §16.18 A6, J-4, N2 and R6-2), once per
+settle run:
+- the judge's verdict counts only when fresh (R-AN-70): valid, with asof_utc no more than 48 h before the run and no
+  more than 10 min after it, and (§16.18 A7 decision 15) not earlier than L_prev, the last_fresh_asof_utc of
+  STATE.json at the start of the run: an older verdict served after a newer one (a stale cache, an old deploy) is
+  not fresh, so last_fresh_asof_utc never decreases. Otherwise P7 is false and the verdict opens, lifts and retires
+  nothing;
+- before P0 (00:00Z of the earliest set date of canary_from and live_from) the verdict makes no event at all;
+- operational keys (A0, system_error:, A12 probe_failed / app_scope / routine_connectors / inbox_identity /
+  inbox_config, A13 guard_not_enforced / guard_config, and since the third review of §16.18 A7 A13 routine_project /
+  cc_version_below / cc_version_unknown) and every key before LS (00:00Z of live_from) are mirrored:
+  paused while a fresh verdict carries them, lifted (`lifted:`) when it does not, never cleared by an analyst-side
+  row and never a cause of retirement;
+- a live integrity key pauses until an analyst-side clear dated at or after its PAUSED event; a new live integrity
+  key after such a clear retires the analyst, "after" by time (sixth review, R6-2): the key's first-seen time in the
+  verdict (`violation_first_seen`, the judge's FINDINGS.csv) is later than A, the earliest clear time of a cleared
+  live integrity pause (the utc of its earliest clear row dated at or after its PAUSED event), whatever the order in
+  which settle runs saw the clear and the key. A key without a usable first-seen time pauses and never retires;
+- 48 h without a fresh verdict pauses `judge_silent` (from P0 on); the next fresh verdict lifts it.
+Interpretation (logged for the register): a judge subject is mirrored when ANY of its PAUSED events lies before LS
+(step 2's own test), so a canary key that recurs in the live period stays mirrored, as its first pause was.
+Interpretation (sixth review, logged for the register): a cleared live pause whose clear row is no longer in
+ADJUDICATIONS.csv (an append-only file edited by hand) takes its RESUMED event's utc as its clear time, the latest
+time it can have, so a lost row never makes an earlier key retire the analyst.
 """
 import csv
 import datetime as dt
@@ -15,6 +40,17 @@ ALPHA = 0.0025
 MODEL = "claude-opus-5-5"
 EVENT_SCHEMA = "analyst-state-event/1"
 STATE_SCHEMA = "analyst-state/1"
+VERDICT_SCHEMA = "analyst-verdict/1"
+VERDICT_VALUES = ("SOUND", "WARNING", "VIOLATION")
+FRESH_BEFORE = dt.timedelta(hours=48)       # a verdict older than this before the run is not fresh (R-AN-70, N2)
+FRESH_AFTER = dt.timedelta(minutes=10)      # nor one dated later than this after it
+SILENT_AFTER = dt.timedelta(hours=48)       # judge_silent: no fresh verdict for longer than this (R-AN-55 step 4)
+JUDGE = "judge_violation:"
+JUDGE_SILENT = "judge_silent"
+OPERATIONAL_A12 = ("probe_failed", "app_scope", "routine_connectors", "inbox_identity", "inbox_config")
+# the session guard not acting, or its files (§16.18 A7); a routine in a claude.ai project, or a harness that may not
+# keep the guard closed (its third review, decisions 21 and 22)
+OPERATIONAL_A13 = ("guard_not_enforced", "guard_config", "routine_project", "cc_version_below", "cc_version_unknown")
 LEDGER_COLS = ["call_id", "model_day", "window", "class", "terminal_status", "status", "detail", "action", "side",
                "stop_mult", "target_mult", "confidence", "D_ref", "S", "T", "lock_utc", "attempts", "entry_utc",
                "exit_utc", "P_e", "X", "Tg", "exit_minute_utc", "P_x", "reason", "fill", "gross_usd", "cost_usd",
@@ -70,12 +106,93 @@ def model_overlays(view):
     return over, unmatched
 
 
-def cleared_subjects(view):
+def clear_rows(view):
+    """{subject: [utc, ...]} of the owner's pause clears in analyst/ADJUDICATIONS.csv (R-AN-62); a row whose utc is
+    not an R-C4 time clears nothing."""
     b = view.read("analyst/ADJUDICATIONS.csv")
+    out = {}
     if not b:
-        return set()
-    return {r["subject"] for r in csv.DictReader(io.StringIO(b.decode("utf-8")))
-            if r.get("ref") == "pause" and r.get("decision") == "clear"}
+        return out
+    for r in csv.DictReader(io.StringIO(b.decode("utf-8"))):
+        if r.get("ref") != "pause" or r.get("decision") != "clear":
+            continue
+        t = _parse(r.get("utc"))
+        if t is not None:
+            out.setdefault(r.get("subject"), []).append(t)
+    return out
+
+
+def _parse(s):
+    try:
+        return rec.parse_iso(s)
+    except (TypeError, ValueError):
+        return None
+
+
+def fresh_verdict(verdict, now, last_fresh=None):
+    """The verdict when it is fresh (R-AN-70, §16.18 A6 fourth review, N2), else None: schema analyst-verdict/1, a
+    known analyst_verdict, violation_keys a list of strings, and asof_utc an R-C4 time in [now - 48 h, now + 10 min]
+    and (§16.18 A7 decision 15) not earlier than `last_fresh`, L_prev: the asof of the newest fresh verdict an earlier
+    run fetched (no condition while it is None). The same verdict fetched again stays fresh."""
+    if not isinstance(verdict, dict) or verdict.get("schema") != VERDICT_SCHEMA \
+            or verdict.get("analyst_verdict") not in VERDICT_VALUES:
+        return None
+    keys = verdict.get("violation_keys")
+    if not isinstance(keys, list) or not all(isinstance(k, str) for k in keys):
+        return None
+    t = _parse(verdict.get("asof_utc"))
+    if t is None or not now - FRESH_BEFORE <= t <= now + FRESH_AFTER:
+        return None
+    if last_fresh is not None and t < last_fresh:
+        return None
+    return verdict
+
+
+def first_seen_times(verdict):
+    """{key: aware UTC} from a fresh verdict's `violation_first_seen` (R-AN-70, §16.18 A6 sixth review, R6-2): the
+    first time the judge found each key. An entry counts only as an R-C4 time at or before the verdict's asof_utc;
+    a missing or malformed map, or entry, gives none for that key."""
+    m = verdict.get("violation_first_seen")
+    asof = _parse(verdict.get("asof_utc"))
+    if not isinstance(m, dict) or asof is None:
+        return {}
+    out = {}
+    for k, v in m.items():
+        t = _parse(v) if isinstance(k, str) and isinstance(v, str) else None
+        if t is not None and t <= asof:
+            out[k] = t
+    return out
+
+
+def operational(key):
+    """An operational VIOLATION key (R-AN-55, R-AN-67): the judge cannot see, a system error, the sandbox leaked, or
+    the owner's own configuration; since §16.18 A7 also the session guard not acting or its files wrong (A13
+    guard_not_enforced, guard_config), and since its third review a routine in a claude.ai project or a guarded
+    session on a Claude Code version below the guard's minimum or of an unknown version (A13 routine_project,
+    cc_version_below, cc_version_unknown). It pauses while the verdict carries it and never retires the analyst. A13
+    forbidden_attempt and forbidden_executed are integrity keys."""
+    if key.startswith(("A0|", "system_error:")):
+        return True
+    parts = key.split("|")
+    return len(parts) >= 2 and ((parts[0] == "A12" and parts[1] in OPERATIONAL_A12)
+                                or (parts[0] == "A13" and parts[1] in OPERATIONAL_A13))
+
+
+def period_starts(mode_doc):
+    """(P0, LS): 00:00:00Z of the earliest set date of canary_from and live_from, and of live_from (None if unset)."""
+    def midnight(d):
+        return dt.datetime.combine(dt.date.fromisoformat(d), dt.time(0), tzinfo=rec.UTC)
+    set_ = [midnight(d) for d in (mode_doc.get("canary_from"), mode_doc.get("live_from")) if d]
+    ls = midnight(mode_doc["live_from"]) if mode_doc.get("live_from") else None
+    return (min(set_) if set_ else None), ls
+
+
+def resumed_subject(reason):
+    """The subject of a RESUMED event: its reason after the first `clear:` or `lifted:` (R-AN-56)."""
+    for p in ("clear:", "lifted:"):
+        if reason.startswith(p):
+            return reason[len(p):]
+    return reason
 
 
 def events(view):
@@ -135,7 +252,7 @@ def promotion(rows, first_day, e, verdict):
         out["P4"] = False
     R = [r["settled"]["outcome"]["R"] for r in ct]
     out["P5"] = bool(n) and sum(R) - max(R) > 0
-    out["P7"] = verdict is not None and verdict.get("analyst_verdict") in ("SOUND", "WARNING")
+    out["P7"] = verdict is not None and verdict.get("analyst_verdict") in ("SOUND", "WARNING")   # a fresh one
     out["mu"] = mu
     out["all"] = all(out[k] for k in ("P1", "P2", "P3", "P4", "P5", "P7"))
     return out
@@ -143,14 +260,16 @@ def promotion(rows, first_day, e, verdict):
 
 def run_state(view, processed_days, now, run_id, head_sha, verdict, write):
     """Evaluate the state after each processed model day (R-AN-53..R-AN-56). `write(path, bytes)` writes a file.
-    Returns the STATE.json object."""
+    `verdict` is the one this run fetched (None when the fetch failed); only a fresh one counts (R-AN-70). Returns
+    the STATE.json object."""
     overlays, _unmatched = model_overlays(view)
     evs = events(view)
     seq = max([0] + [e["seq"] for e in evs])
-    cleared = cleared_subjects(view)
     state = "SHAKEDOWN"
     promoted_day = demoted_day = None
-    pauses = set()
+    opened = {}                          # the open pauses: subject -> utc of the PAUSED event that opened it
+    paused_at = {}                       # subject -> utcs of every PAUSED event for it
+    cleared_judge = []                   # (subject, its PAUSED utc, the RESUMED utc) of `clear:judge_violation:`
     for e in evs:
         ev = e["event"]
         if ev in ("TESTING", "PROMOTED", "DEMOTED", "RETIRED"):
@@ -160,11 +279,23 @@ def run_state(view, processed_days, now, run_id, head_sha, verdict, write):
             if ev == "DEMOTED":
                 demoted_day = dt.date.fromisoformat(e["model_day"])
         elif ev == "PAUSED":
-            pauses.add(e["reason"])
+            t = _parse(e.get("utc"))
+            opened.setdefault(e["reason"], t)
+            paused_at.setdefault(e["reason"], []).append(t)
         elif ev == "RESUMED":
-            pauses.discard(e["reason"].replace("clear:", "", 1))
+            subj = resumed_subject(e["reason"])
+            if e["reason"].startswith("clear:" + JUDGE):
+                cleared_judge.append((subj, opened.get(subj), _parse(e.get("utc"))))
+            opened.pop(subj, None)
     upto = max(processed_days) if processed_days else now.date()
     rows, first_day = collect(view, upto, overlays)
+    p0, ls = period_starts(paths.read_mode(view))
+    prev_jv = (view.read_json(paths.STATE_PATH) or {}).get("judge_verdict") or {}
+    last_fresh = _parse(prev_jv.get("last_fresh_asof_utc"))      # L_prev: STATE.json at the start of the run
+    fresh = fresh_verdict(verdict, now, last_fresh)             # an older verdict is not fresh (§16.18 A7, d. 15)
+    if fresh is not None:
+        t = _parse(fresh["asof_utc"])
+        last_fresh = t if last_fresh is None else max(last_fresh, t)
 
     def emit(event, reason, day, n, E, K):
         nonlocal seq
@@ -174,28 +305,74 @@ def run_state(view, processed_days, now, run_id, head_sha, verdict, write):
                "run_id": run_id, "head_sha": head_sha}
         write(paths.state_event_path(seq), rec.record_bytes(doc))
         evs.append(doc)
+        if event == "PAUSED":
+            opened.setdefault(reason, now)
+            paused_at.setdefault(reason, []).append(now)
+        elif event == "RESUMED":
+            opened.pop(resumed_subject(reason), None)
 
-    # pauses from the model overlay and the judge
+    def before_ls(subj):
+        return ls is not None and any(t is not None and t < ls for t in paused_at.get(subj, []))
+
+    def mirrored(subj):
+        """A judge pause the verdict lifts (R-AN-55): an operational key, no live_from, or paused before LS."""
+        return subj.startswith(JUDGE) and (operational(subj[len(JUDGE):]) or ls is None or before_ls(subj))
+
+    def live_integrity(subj):
+        return subj.startswith(JUDGE) and not mirrored(subj)
+
+    clears = clear_rows(view)
+
+    def clear_time(subj, paused, resumed):
+        """When the owner cleared a pause (sixth review, R6-2): the utc of its earliest clear row dated at or after
+        its PAUSED event, the row step 1 applied; the RESUMED event's utc if no such row is left."""
+        rows = [t for t in clears.get(subj, []) if paused is not None and t >= paused]
+        return min(rows) if rows else resumed
+
+    # A, the arming time (R-AN-55 step 2): the earliest clear time of a live integrity pause the owner cleared
+    arm_times = [clear_time(s, p, r) for (s, p, r) in cleared_judge if live_integrity(s)]
+
+    # model pauses (R-AN-57): once per run_id, whatever ADJUDICATIONS.csv held before the pause existed
     for cid, run in sorted(overlays.items()):
         subj = f"model:{run}"
-        if subj not in pauses and subj not in cleared and not any(e["reason"] == subj for e in evs):
+        if subj not in opened and subj not in paused_at:
             emit("PAUSED", subj, None, None, None, None)
-            pauses.add(subj)
-    vkeys = (verdict or {}).get("violation_keys") or []
-    ever_cleared_judge = any(s.startswith("judge_violation:") for s in cleared)
-    for key in vkeys:
-        subj = f"judge_violation:{key}"
-        if subj in cleared or any(e["reason"] == subj for e in evs):
+    # 1. clears: a model pause or a live integrity pause, by a row dated at or after its PAUSED event (R-AN-62)
+    for subj in sorted(opened):
+        if not (subj.startswith("model:") or live_integrity(subj)) or opened[subj] is None:
             continue
-        if ever_cleared_judge and state != "RETIRED":
-            emit("RETIRED", "violation", None, None, None, None)
-            state = "RETIRED"
-        else:
-            emit("PAUSED", subj, None, None, None, None)
-            pauses.add(subj)
-    for subj in sorted(pauses & cleared):
-        emit("RESUMED", f"clear:{subj}", None, None, None, None)
-        pauses.discard(subj)
+        if any(t >= opened[subj] for t in clears.get(subj, [])):
+            if live_integrity(subj):
+                arm_times.append(clear_time(subj, opened[subj], now))
+            emit("RESUMED", f"clear:{subj}", None, None, None, None)
+    arm_times = [t for t in arm_times if t is not None]
+    armed_at = min(arm_times) if arm_times else None
+    # 2.-4. the verdict, only from P0 (R-AN-55): keys, lifts, silence
+    if p0 is not None and now >= p0:
+        if fresh is not None:
+            keys = fresh["violation_keys"]
+            seen = first_seen_times(fresh)
+            for key in sorted(set(keys)):
+                subj = JUDGE + key
+                if operational(key) or ls is None or now < ls or before_ls(subj):
+                    if subj not in opened:
+                        emit("PAUSED", subj, None, None, None, None)
+                elif any(t is not None and t >= ls for t in paused_at.get(subj, [])):
+                    continue                     # a live pause: in force until its clear (step 1), then done
+                elif armed_at is not None and key in seen and seen[key] > armed_at and state != "RETIRED":
+                    emit("RETIRED", "violation", None, None, None, None)     # first seen after a live clear
+                    state = "RETIRED"
+                else:
+                    emit("PAUSED", subj, None, None, None, None)
+            for subj in sorted(opened):
+                if mirrored(subj) and subj[len(JUDGE):] not in keys:
+                    emit("RESUMED", f"lifted:{subj}", None, None, None, None)
+            if JUDGE_SILENT in opened:
+                emit("RESUMED", f"lifted:{JUDGE_SILENT}", None, None, None, None)
+        elif JUDGE_SILENT not in opened and (last_fresh is None or last_fresh < now - SILENT_AFTER):
+            emit("PAUSED", JUDGE_SILENT, None, None, None, None)
+    pauses = set(opened)
+    verdict_p7 = fresh                           # P7 needs a fresh verdict (R-AN-53, N2)
 
     E = K = None
     for e in sorted(processed_days):
@@ -206,7 +383,7 @@ def run_state(view, processed_days, now, run_id, head_sha, verdict, write):
         if state == "SHAKEDOWN":
             emit("TESTING", "first_day", e, 0, 1.0, None)
             state = "TESTING"
-        chk = promotion(rows, first_day, e, verdict)
+        chk = promotion(rows, first_day, e, verdict_p7)
         E = chk["E"]
         ct = counted([r for r in rows if r["day"] <= e])
         R = [r["settled"]["outcome"]["R"] for r in ct]
@@ -261,7 +438,9 @@ def run_state(view, processed_days, now, run_id, head_sha, verdict, write):
             (view.read_json(paths.STATE_PATH) or {}).get("last_processed_day"),
             "side_share": side_share, "side_label": bool(side_share is not None and side_share > 0.85),
             "judge_verdict": {"value": (verdict or {}).get("analyst_verdict"),
-                              "asof_utc": (verdict or {}).get("asof_utc"), "fetched": verdict is not None},
+                              "asof_utc": (verdict or {}).get("asof_utc"), "fetched": verdict is not None,
+                              "fresh": fresh is not None,
+                              "last_fresh_asof_utc": rec.iso(last_fresh) if last_fresh else None},
             "last_event_seq": seq, "run_id": run_id, "head_sha": head_sha}
 
 

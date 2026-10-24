@@ -1,6 +1,9 @@
 {
  "effort": null,
  "freeze_tag": "analyst-v1-freeze",
+ "inbox_from_utc": null,
+ "inbox_repo": "Mohamedalhaaj/gold-analyst-inbox",
+ "inbox_repo_id": 1430863697,
  "judge_site_url": "https://gold-watch-mq1dqc.xauusd-quant.workers.dev",
  "model": "claude-opus-5-5",
  "page_url": "https://gold-analyst.xauusd-quant.workers.dev/analyst/",

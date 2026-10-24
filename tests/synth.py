@@ -186,20 +186,32 @@ class FakeClock:
 
 # ---------------------------------------------------------------- fake GitHub API
 class FakeAPI:
+    """gold-analyst's API (comments, runs, dispatches) and the inbox's activity log (register R-AN-32: the complete
+    read). `read_fail` makes the next reads fail, as `ghapi.InboxActivity` does after its tries."""
+
     def __init__(self, now):
         self.now = now
         self.issue_comments = []
         self.acts = []
         self.dispatched = []
         self._id = 1000
+        self.read_fail = 0
+        self.read_how = "token"
+        self.reads = 0
 
-    def add_push(self, ref, before, after, t, actor="claude[bot]", typ="branch_creation"):
+    def add_push(self, ref, before, after, t, actor="Mohamedalhaaj", typ="branch_creation", act_id=None):
         self._id += 1
-        self.acts.insert(0, {"id": self._id, "ref": ref, "before": before, "after": after,
-                             "timestamp": rec.iso(t), "activity_type": typ, "actor": {"login": actor}})
+        self.acts.insert(0, {"id": act_id if act_id is not None else self._id, "ref": ref, "before": before,
+                             "after": after, "timestamp": rec.iso(t), "activity_type": typ,
+                             "actor": {"login": actor}})
 
-    def activity(self, ref=None, time_period=None):
-        return [a for a in self.acts if ref is None or a["ref"] == ref]
+    def read_activity(self):
+        from ga import ghapi
+        self.reads += 1
+        if self.read_fail:
+            self.read_fail -= 1
+            raise ghapi.ActivityReadFailed("page failed after its tries")
+        return list(self.acts), self.read_how
 
     def run(self, run_id):
         return {"created_at": rec.iso(self.now())}
@@ -209,13 +221,78 @@ class FakeAPI:
 
     def post_comment(self, issue, body):
         self._id += 1
-        c = {"id": self._id, "created_at": rec.iso(self.now()), "body": body,
+        t = rec.iso(self.now())
+        c = {"id": self._id, "created_at": t, "updated_at": t, "body": body,
              "user": {"login": "github-actions[bot]", "type": "Bot"}}
         self.issue_comments.append(c)
         return c
 
     def dispatch(self, wf, ref, inputs):
         self.dispatched.append((wf, ref, inputs))
+
+
+def gh_response(status, body):
+    """What `gh api -i` gives: (exit code, stdout with the status line and headers, stderr)."""
+    out = f"HTTP/2.0 {status} X\r\nContent-Type: application/json; charset=utf-8\r\n\r\n".encode()
+    out += json.dumps(body).encode()
+    ok = 200 <= status < 300
+    return (0 if ok else 1), out, (b"" if ok else f"gh: X (HTTP {status})\n".encode())
+
+
+class FakeGH:
+    """`gh api -i <args>` for the session probes (register R-AN-84) as GitHub and Anthropic's proxy answer a session
+    attached to the inbox only: the inbox answers, other repositories get the proxy's scope refusal, writes on the
+    inbox's protected refs are refused (422), the Actions setting needs admin rights (403), and no webhook exists.
+    `routes[(method, path)] = (status, body)` overrides an answer; `absent` = no gh in the image."""
+
+    SCOPE = "GitHub access to {r} is not enabled for this session"
+
+    def __init__(self, inbox_repo, inbox_dir):
+        self.inbox_repo, self.inbox_dir = inbox_repo, inbox_dir
+        self.routes = {}
+        self.calls = []
+        self.absent = False
+        self.seen_after_polls = 0
+        self.polls = 0
+        self.on_call = None
+
+    def __call__(self, args, timeout):
+        if self.absent:
+            return None
+        self.calls.append(list(args))
+        if self.on_call:
+            self.on_call(args)
+        method, path, i = "GET", None, 0
+        while i < len(args):
+            if args[i] == "-X":
+                method, i = args[i + 1], i + 2
+                continue
+            if args[i] in ("-f", "-F"):
+                i += 2
+                continue
+            path, i = args[i], i + 1
+        if (method, path) in self.routes:
+            return gh_response(*self.routes[(method, path)])
+        base = path.split("?", 1)[0]
+        inbox = f"repos/{self.inbox_repo}"
+        if method == "GET" and base == inbox:
+            return gh_response(200, {"id": 1, "full_name": self.inbox_repo})
+        if method == "GET" and base == f"{inbox}/hooks":
+            return gh_response(200, [])
+        if method == "GET" and base == f"{inbox}/activity":
+            self.polls += 1
+            ref = path.split("ref=", 1)[1].split("&", 1)[0]
+            sha = git(self.inbox_dir, "rev-parse", "--verify", "-q", ref, check=False)
+            listed = sha and self.polls > self.seen_after_polls
+            return gh_response(200, [{"id": 1, "ref": ref, "after": sha}] if listed else [])
+        if base.startswith(inbox + "/git/refs"):
+            return gh_response(422, {"message": "Repository rule violations found"})
+        if base == f"{inbox}/actions/permissions":
+            return gh_response(403, {"message": "Resource not accessible by integration"})
+        if base.startswith("repos/"):
+            r = "/".join(base.split("/")[1:3])
+            return gh_response(403, {"message": self.SCOPE.format(r=r)})
+        return gh_response(404, {"message": "Not Found"})
 
 
 # ---------------------------------------------------------------- local bare-repo world
@@ -232,10 +309,33 @@ def git(cwd, *args, env=None, check=True):
     return p.stdout.decode().strip()
 
 
-class World:
-    """origin.git (bare) + a seed clone that commits `files` to main + a session clone + a merge workspace clone."""
+INBOX_REPO = "Mohamedalhaaj/gold-analyst-inbox"
 
-    def __init__(self, tmp, files, protect_main=False):
+# The inbox's rulesets (register R-AN-75 item 2), as a pre-receive hook: main only through the deploy key (the
+# analyst-inbox-mirror job; here GA_TEST_DEPLOY_KEY), no tags, no branch outside claude/, and claude/** append-only
+# (no deletion, no non-fast-forward). GitHub's refusal text carries GH013.
+INBOX_HOOK = """#!/bin/sh
+z=0000000000000000000000000000000000000000
+rule() { echo "error: GH013: Repository rule violations found for $1." >&2; exit 1; }
+while read old new ref; do
+  if [ -n "$GA_TEST_DEPLOY_KEY" ] && [ "$ref" = refs/heads/main ]; then continue; fi
+  case "$ref" in
+    refs/heads/claude/*)
+      [ "$new" = "$z" ] && rule "$ref"
+      if [ "$old" != "$z" ] && ! git merge-base --is-ancestor "$old" "$new"; then rule "$ref"; fi ;;
+    *) rule "$ref" ;;
+  esac
+done
+exit 0
+"""
+
+
+class World:
+    """origin.git (bare: gold-analyst) + a seed clone that commits `files` to main. With `inbox`, also the agent inbox
+    `Mohamedalhaaj/gold-analyst-inbox.git` (bare, with the inbox's rules), whose main the real analyst-inbox-mirror
+    code fast-forwards to origin main (`mirror`); sessions clone the inbox."""
+
+    def __init__(self, tmp, files, protect_main=False, inbox=False):
         self.tmp = Path(tmp)
         self.tmp.mkdir(parents=True, exist_ok=True)
         self.origin = self.tmp / "origin.git"
@@ -257,6 +357,29 @@ class World:
                             "[ -f \"$GIT_DIR/deny_main\" ]; then echo 'main is protected' >&2; exit 1; fi\n"
                             "done\nexit 0\n")
             hook.chmod(0o755)
+        self.inbox = None
+        self.mirror_log = []
+        if inbox:
+            self.inbox = self.tmp / f"{INBOX_REPO}.git"
+            self.inbox.parent.mkdir(parents=True, exist_ok=True)
+            git(self.tmp, "init", "-q", "--bare", "-b", "main", str(self.inbox))
+            hook = self.inbox / "hooks" / "pre-receive"
+            hook.write_text(INBOX_HOOK)
+            hook.chmod(0o755)
+            git(self.inbox, "fetch", "-q", str(self.origin), "+refs/heads/main:refs/heads/main")   # as created
+
+    def direct_url(self, repo):
+        """D(x) of R-AN-84 in the tests: a local path that does not exist (no network)."""
+        return str(self.tmp / "direct" / f"{repo}.git")
+
+    def mirror(self):
+        """analyst-inbox-mirror (register R-AN-83): fast-forward inbox main to origin main, with the real job code."""
+        if self.inbox is None:
+            return None
+        import inbox_mirror
+        d = self.clone("mirror")
+        rc = inbox_mirror.mirror(d, str(self.inbox), env={"GA_TEST_DEPLOY_KEY": "1"}, log=self.mirror_log.append)
+        return rc
 
     def deny_main(self, on=True):
         f = self.origin / "deny_main"
@@ -265,14 +388,17 @@ class World:
         elif f.exists():
             f.unlink()
 
-    def clone(self, name):
+    def clone(self, name, src=None):
         d = self.tmp / name
         if d.exists():
             shutil.rmtree(d)
-        git(self.tmp, "clone", "-q", str(self.origin), str(d))
+        git(self.tmp, "clone", "-q", str(src or self.origin), str(d))
         return d
 
-    def owner_commit(self, files, msg="owner"):
+    def clone_inbox(self, name):
+        return self.clone(name, src=self.inbox or self.origin)
+
+    def owner_commit(self, files, msg="owner", mirror=True):
         git(self.seed, "pull", "-q", "--rebase", "origin", "main")
         for p, b in files.items():
             fp = self.seed / p
@@ -281,13 +407,18 @@ class World:
         git(self.seed, "add", "-A")
         git(self.seed, "commit", "-q", "-m", msg)
         git(self.seed, "push", "-q", "origin", "main")
+        if mirror:
+            self.mirror()                                  # an owner push to main triggers analyst-inbox-mirror
         return git(self.seed, "rev-parse", "HEAD")
 
     def branch_sha(self, branch):
-        return git(self.origin, "rev-parse", f"refs/heads/{branch}")
+        return git(self.inbox or self.origin, "rev-parse", f"refs/heads/{branch}")
 
     def main_sha(self):
         return git(self.origin, "rev-parse", "refs/heads/main")
+
+    def inbox_main_sha(self):
+        return git(self.inbox, "rev-parse", "refs/heads/main")
 
     def main_file(self, path):
         p = subprocess.run(["git", "-C", str(self.origin), "show", f"main:{path}"], capture_output=True)

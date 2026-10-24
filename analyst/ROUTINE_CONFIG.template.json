@@ -1,29 +1,41 @@
 {
  "schema": "analyst-routine-config/1",
- "note": "TEMPLATE for the owner (not an export). After creating the routines, the owner exports the real configuration with RemoteTrigger get into analyst/ROUTINE_CONFIG.json (register R-AN-61), minus anything secret. Prompts are the one-line texts below; each points to a section of the frozen analyst/ROUTINE_PROMPT.md.",
+ "note": "TEMPLATE for the owner (not an export). The routines attach to the agent inbox only (register R-AN-61, R-AN-75 item 1, §16.18 A6): sessions clone Mohamedalhaaj/gold-analyst-inbox and push their attempt, call, lesson and playbook files to its claude/analyst-* branches; analyst-merge in gold-analyst reads them from the inbox's activity. After repointing the routines, the owner exports the real configuration with RemoteTrigger get into analyst/ROUTINE_CONFIG.json, minus anything secret, in its own commit. Prompts are the one-line texts below; each points to a section of the frozen analyst/ROUTINE_PROMPT.md. Every session runs under the session guard committed in .claude/ (R-AN-85, §16.18 A7), which allows only the command lines, reads and draft writes of these prompts. Connectors and plugins: none, on every routine and on the probe routine (register R-AN-61, §16.18 A6 second review, SEC-2). claude.ai attaches every account connector when a routine is created, so every create or update is followed by clearing the connectors and a fresh export in its own commit; the export's raw must show mcp_connections [] and enabled_plugins [] (tests/test_routine_config.py). No routine is created from, or runs as threads of, a claude.ai project (register R-AN-61, §16.18 A7 third review, decision 21): a project's cloud threads run no repository hook and apply neither its permission rules nor its env, so the session guard would not act. Routines are created and updated only with RemoteTrigger create and update or at claude.ai/code/routines, never from a project's conversation or by accepting a project's setup recommendations; a routine found in a project is deleted and created again outside it (its trigger_id changes), cleared of connectors and exported. Each exported routine has project: the project's name as claude.ai shows it, or null for none. When writing each export the owner reads it from the RemoteTrigger get response (every field whose name contains project, case ignored, at any depth, is kept in raw with its value), the routine's page at claude.ai/code/routines and, when the account shows Projects at claude.ai/code, the Scheduled tasks tab of each project, and names the sources read in the export's note. Only null is accepted (tests/test_routine_config.py; the judge's A13 routine_project, an immediate stop).",
  "exported_utc": null,
  "environment": {
   "name": "gold-analyst",
-  "network": {"mode": "custom allowlist", "allow": ["the git proxy (default)", "datafeed.dukascopy.com"]},
+  "network": {"mode": "custom", "allow": ["datafeed.dukascopy.com"], "package_managers": "off",
+              "note": "The GitHub proxy is reachable at every network level and serves only the attached inbox. The session steps import only the standard library and analyst/vendor (tests/test_layout.py), so no package install is needed. Disclosed: through the inbox's webhooks GitHub itself can still reach any address for a session (R-AN-75 item 2); no network setting closes that. Since §16.18 A7 the session guard (.claude/hooks/guard.py, R-AN-85) refuses every call that could create one, and the run-log scan (R-AN-86) and the security log (R-AN-60) detect what it could miss."},
   "secrets": "none",
-  "setup": "none (dependencies are vendored; python3 >= 3.10 from the image)"
+  "setup": "none (dependencies are vendored; python3 >= 3.10, git and gh from the image)"
  },
+ "github_app": "The Claude GitHub App installation that routine sessions use has repository access 'Only select repositories' holding gold-analyst-inbox, and never gold-analyst, gold-forward-watch or xauusd-quant (R-AN-75 item 1); no /web-setup copy of the owner's gh token is stored.",
  "routines": [
-  {"name": "analyst-w1", "trigger_id": null, "repo": "Mohamedalhaaj/gold-analyst", "enabled": true,
+  {"name": "analyst-w1", "trigger_id": null, "repo": "Mohamedalhaaj/gold-analyst-inbox", "enabled": true,
    "crons": ["20 6,7 * * 1-5"], "model": "claude-opus-5-5", "effort": null,
    "allowed_tools": ["Bash", "Read", "Write"], "branch_pushes": "default (claude/* only); unrestricted off",
+   "mcp_connections": [], "enabled_plugins": [], "project": null,
    "prompt": "Follow the section CALL of analyst/ROUTINE_PROMPT.md exactly.", "prompt_sha256": null},
-  {"name": "analyst-w2", "trigger_id": null, "repo": "Mohamedalhaaj/gold-analyst", "enabled": true,
+  {"name": "analyst-w2", "trigger_id": null, "repo": "Mohamedalhaaj/gold-analyst-inbox", "enabled": true,
    "crons": ["50 12,13 * * 1-5"], "model": "claude-opus-5-5", "effort": null,
    "allowed_tools": ["Bash", "Read", "Write"], "branch_pushes": "default (claude/* only); unrestricted off",
+   "mcp_connections": [], "enabled_plugins": [], "project": null,
    "prompt": "Follow the section CALL of analyst/ROUTINE_PROMPT.md exactly.", "prompt_sha256": null},
-  {"name": "analyst-lesson", "trigger_id": null, "repo": "Mohamedalhaaj/gold-analyst", "enabled": true,
+  {"name": "analyst-lesson", "trigger_id": null, "repo": "Mohamedalhaaj/gold-analyst-inbox", "enabled": true,
    "crons": ["40 16 * * 2-6"], "model": "claude-opus-5-5", "effort": null,
    "allowed_tools": ["Bash", "Read", "Write"], "branch_pushes": "default (claude/* only); unrestricted off",
+   "mcp_connections": [], "enabled_plugins": [], "project": null,
    "prompt": "Follow the section LESSON of analyst/ROUTINE_PROMPT.md exactly.", "prompt_sha256": null},
-  {"name": "analyst-revision", "trigger_id": null, "repo": "Mohamedalhaaj/gold-analyst", "enabled": true,
+  {"name": "analyst-revision", "trigger_id": null, "repo": "Mohamedalhaaj/gold-analyst-inbox", "enabled": true,
    "crons": ["0 18,22 * * 6"], "model": "claude-opus-5-5", "effort": null,
    "allowed_tools": ["Bash", "Read", "Write"], "branch_pushes": "default (claude/* only); unrestricted off",
+   "mcp_connections": [], "enabled_plugins": [], "project": null,
    "prompt": "Follow the section REVISION of analyst/ROUTINE_PROMPT.md exactly.", "prompt_sha256": null}
- ]
+ ],
+ "probe_session": {
+  "note": "The one-off probe session that must give probe_pass before canary_from is set (register §16.18 A6, Canary; R-AN-84; C5-C7). It runs as a routine of its own, analyst-probe, fired by the owner with run-now, in environment gold-analyst, attached to the inbox only, with the routines' network and tools, and with no connector and no plugin (its RemoteTrigger get is exported with the other routines, SEC-2); it may be rerun at any time. The owner copies the pushed probes/<tag>.json byte for byte to gold-analyst analyst/canary/checks/PROBE_<tag>.json. Since §16.18 A7 it is also C20, the test of the session guard (R-AN-74 C20, R-AN-85): its prompt follows the frozen analyst/PROBE_SESSION_PROMPT.md (step 1 is the probe, then two allowed controls, then harmless forbidden steps the guard must refuse). It runs after the guard's files are on inbox main and before 06:00 UTC of canary_from, again before live_from and after any change of .claude/**, analyst/ROUTINE_PROMPT.md or analyst/PROBE_SESSION_PROMPT.md. Changing this prompt is a routine update: clear the connectors, then export in its own commit. The environment gold-analyst holds no environment variable. The owner writes analyst/canary/checks/C20.json from the run log and runs python3 analyst/jobs/scan_runs.py on it. Since the third review of A7 (decision 22) the probe record holds cc_version, the session's Claude Code version (the first line of claude --version); C20.json copies it unchanged from analyst/canary/checks/PROBE_<tag>.json, and C20 passes only with at least 2.1.295, the version onFailure needs (R-AN-85).",
+  "name": "analyst-probe", "repo": "Mohamedalhaaj/gold-analyst-inbox", "model": "claude-opus-5-5", "allowed_tools": ["Bash", "Read", "Write"],
+  "mcp_connections": [], "enabled_plugins": [], "project": null,
+  "prompt": "Follow analyst/PROBE_SESSION_PROMPT.md exactly."
+ }
 }

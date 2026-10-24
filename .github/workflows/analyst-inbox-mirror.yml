@@ -1,0 +1,57 @@
+# analyst-inbox-mirror (register R-AN-83, R-AN-75 items 2-4, §16.18 A6). Script only, no model. It keeps the agent
+# inbox's main (Mohamedalhaaj/gold-analyst-inbox, where the routine sessions clone and push) equal to this
+# repository's main: fast-forward only, never a forced push; an inbox main that has diverged fails the run and is
+# left for the owner. It pushes over SSH with the inbox's write deploy key, the secret INBOX_MIRROR_KEY of the
+# environment `analyst-inbox` (deployment branches: main only), used only here and never printed. It starts on a
+# push to main (owner and deploy-key pushes; GITHUB_TOKEN pushes start nothing), after each run of the workflows that
+# commit to main, on a backstop schedule and by hand.
+name: analyst-inbox-mirror
+
+on:
+  push:
+    branches: [main]
+  workflow_run:
+    workflows: [analyst-merge, analyst-settle, analyst-canary-poll, analyst-track]
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: "10,40 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: analyst-inbox-mirror
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: analyst-inbox
+    steps:
+      - name: Run guard (main only; a workflow_run of a run on main)
+        env:
+          WORKFLOW_RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then echo "guard: not refs/heads/main"; exit 1; fi
+          if [ "$GITHUB_EVENT_NAME" = "workflow_run" ] && [ "$WORKFLOW_RUN_BRANCH" != "main" ]; then
+            echo "guard: workflow_run not on main"; exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fast-forward inbox main
+        env:
+          WORKFLOW_RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          INBOX_MIRROR_KEY: ${{ secrets.INBOX_MIRROR_KEY }}
+        run: python -I analyst/jobs/inbox_mirror.py
