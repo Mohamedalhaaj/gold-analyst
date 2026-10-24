@@ -154,18 +154,22 @@ def test_the_probe_set_at_its_full_timeouts_takes_1262_seconds():
 
 def test_the_bash_timeout_covers_every_window_command():
     t_s = BASH_TIMEOUT_MS / 1000
-    # probe: the set, then the result's push retried for 3 minutes (10 s apart), each try at least one push
-    probe_s = probe_set_seconds("probe") + 3 * 60 + 10
+    # the record's `cc_version` (third review of A7, decision 22): records.cc_version gives `claude --version` 10 s
+    # at most (tests/test_inbox_session.py, the stub that hangs), after the probe set of `probe` and of a canary context
+    cc_version_s = 10
+    # probe: the set, the version, then the result's push retried for 3 minutes (10 s apart), each try at least one
+    # push
+    probe_s = probe_set_seconds("probe") + cc_version_s + 3 * 60 + 10
     # a canary context: the hour fetches (no request starts once the 120 s budget is spent; one request of 20 s and
     # the 1.5 s pacing past it), then the canary probe set (no probe starts after 120 s; the longest, branch_delete
     # with its 20 s polling bound, takes 80 s)
     fetch_s = hours.BUDGET_S + hours.TIMEOUT_S + hours.PACE_S
     assert probe_set_seconds("canary", only="branch_delete") == 80
-    context_s = fetch_s + probes.CANARY_BUDGET_S + 80
+    context_s = fetch_s + probes.CANARY_BUDGET_S + 80 + cc_version_s
     # lock: the call's push retried until the deadline, at most 30 minutes after the start interval opens
     w = clock.windows_on(dt.date(2026, 10, 26))[0]
     lock_s = (w.deadline_utc - w.start_interval(0)[0]).total_seconds() + 10
     assert lock_s == 30 * 60 + 10
-    assert (round(probe_s), round(context_s), round(lock_s)) == (1452, 342, 1810)
+    assert (round(probe_s), round(context_s), round(lock_s)) == (1462, 352, 1810)
     # every bound, with at least 10 minutes left for the git commands that have no timeout of their own
     assert max(probe_s, context_s, lock_s) + 600 <= t_s

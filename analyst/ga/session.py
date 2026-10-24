@@ -1,7 +1,8 @@
 """The routine session steps: start, context, lock, lesson-start/lock, revision-start/lock, probe (prereg R1, R3, §3,
 §5; register R-AN-24..R-AN-31, R-AN-48, R-AN-49, R-AN-71, R-AN-84, §16.18 A6). FROZEN.
 
-Only enums, ids, hashes and paths are printed; no model text reaches stdout, a commit message or a shell argument.
+Only enums, ids, hashes and paths are printed (and, in `probe`'s line, the record's `cc_version`, the first line of
+`claude --version`); no model text reaches stdout, a commit message or a shell argument.
 Inputs are read at origin/main (repo_head_sha) through git, never from the working tree. Since §16.18 A6 origin is
 the agent inbox: its main is a gold-analyst main commit, one mirror run behind at most, and analyst-merge witnesses
 pushes on a schedule. No step waits for a witness: an attempt branch in the inbox that no witness on origin/main
@@ -60,10 +61,17 @@ class Session:
         self.work.mkdir(parents=True, exist_ok=True)
         self._state_path().write_text(json.dumps(st, indent=1, sort_keys=True), "utf-8")
 
-    def _selfrep(self, key):
+    def _cc_version(self):
+        """The session's Claude Code version, read once per step by records.cc_version (the first line of
+        `claude --version`; None when it is absent, fails or takes more than 10 s): the attempt and call records'
+        `self_reported.cc_version` and, since the third review of §16.18 A7 (decision 22), the probe record's
+        `cc_version` (R-AN-25, R-AN-84, R-AN-85 "Claude Code version")."""
         if self.cc_version is None:
             self.cc_version = records.cc_version() or ""
-        return records.self_report(self.now(), key, self.env, self.cc_version or None)
+        return self.cc_version or None
+
+    def _selfrep(self, key):
+        return records.self_report(self.now(), key, self.env, self._cc_version())
 
     def _pushed_path(self):
         return self.work / "pushed.json"
@@ -272,11 +280,15 @@ class Session:
     # ------------------------------------------------------------ probes (R-AN-71, R-AN-84; C5-C7)
     def run_probes(self, view, head, kind, tag, fetched=None):
         """The R-AN-84 probes against origin (the inbox), as an `analyst-probe/1` record. A canary context bounds the
-        set at 120 s."""
+        set at 120 s. Both kinds of the record also hold `cc_version`, the session's Claude Code version (third
+        review of §16.18 A7, decision 22), read after the probes: it is not a probe, so it is in neither `outcomes`
+        nor `pass`, and the verdict and the exit code do not depend on it."""
         inbox = (paths.read_pins(view) or {}).get("inbox_repo")
-        return probes.Prober(self.git, self.gh, self.probe_get, self.mono, self.sleep, self.now, inbox, head, kind,
-                             tag, direct=self.direct_url, fetched=fetched,
-                             budget_s=probes.CANARY_BUDGET_S if kind == "canary" else None).run()
+        res = probes.Prober(self.git, self.gh, self.probe_get, self.mono, self.sleep, self.now, inbox, head, kind,
+                            tag, direct=self.direct_url, fetched=fetched,
+                            budget_s=probes.CANARY_BUDGET_S if kind == "canary" else None).run()
+        res["cc_version"] = self._cc_version()
+        return res
 
     def probe(self):
         """`run_window.py probe` (R-AN-84): the probes with no window, ignoring mode and time. It writes the record

@@ -6,10 +6,13 @@ witness: an unwitnessed attempt branch in the inbox is a draw in progress (`conc
 it itself. The probes record only integers, enums and booleans, and give `pass`, `fail` or `incomplete`.
 """
 import json
+import os
+import time
+from pathlib import Path
 
 import pytest
 
-from ga import probes, rec
+from ga import probes, rec, records
 from harness import PLAN, Harness
 from synth import INBOX_REPO, git
 
@@ -125,8 +128,10 @@ def test_probe_subcommand_in_a_conforming_inbox(tmp_path):
     rc, verdict, res = run_probe(h)
     tag = "p20261029T101500Z"
     assert (rc, verdict) == (0, "probe_pass")
-    assert set(res) == {"schema", "tag", "kind", "repo_head_sha", "probe_utc", "outcomes", "pass", "verdict"}
+    assert set(res) == {"schema", "tag", "kind", "repo_head_sha", "probe_utc", "outcomes", "pass", "verdict",
+                        "cc_version"}
     assert (res["schema"], res["tag"], res["kind"], res["verdict"]) == ("analyst-probe/1", tag, "probe", "pass")
+    assert res["cc_version"] == "test-cc"                  # the session's version (third review of A7, decision 22)
     assert res["repo_head_sha"] == main_before and res["probe_utc"] == "2026-10-29T10:15:00Z"
     assert res["outcomes"] == EXPECTED
     assert set(res["outcomes"]) == set(res["pass"]) == set(probes.ORDER)
@@ -304,6 +309,103 @@ def test_unknown_origin_url_form_makes_the_proxy_probes_error(tmp_path):
         assert res["outcomes"][p] == "error" and res["pass"][p] is None, p
 
 
+# ---------------------------------------------------------------- the session's Claude Code version (decision 22)
+# Third review of §16.18 A7 (R-AN-84, R-AN-85 "Claude Code version"): both kinds of the probe record hold
+# `cc_version`, read by records.cc_version, the function of the attempt and call records' `self_reported.cc_version`:
+# the first line of `claude --version`, at most 100 characters, null when `claude` is absent, fails or takes more than
+# 10 s. It is not a probe: it is in neither `outcomes` nor `pass`, and the verdict and the exit code do not depend on
+# it. Here the session reads it itself (Harness.cc_version None) from a stub `claude` on PATH.
+CC = "2.1.309 (Claude Code)"
+LONG = "2.1.309 " + "x" * 150
+STUBS = {
+    "version": ("echo '2.1.309 (Claude Code)'\n", CC),
+    "long_first_line": (f"echo '{LONG}'\necho second\n", LONG[:100]),
+    "none": (None, None),
+    "exits_1": ("echo '2.1.309 (Claude Code)'\nexit 1\n", None),
+    "hangs": ("exec sleep 30\n", None),
+}
+
+
+def path_with(tmp_path, stub):
+    """PATH without this machine's `claude`, and with a stub `claude` first when `stub` (a shell body) is given."""
+    dirs = [d for d in os.environ.get("PATH", "").split(os.pathsep) if d and not (Path(d) / "claude").exists()]
+    if stub is not None:
+        b = tmp_path / "stub_bin"
+        b.mkdir()
+        (b / "claude").write_text("#!/bin/sh\n" + stub)
+        (b / "claude").chmod(0o755)
+        dirs.insert(0, str(b))
+    return os.pathsep.join(dirs)
+
+
+def timed_cc_version(monkeypatch):
+    """records.cc_version, timed at each call: the session's own function, run for real."""
+    real, spent = records.cc_version, []
+
+    def timed(*a, **k):
+        t0 = time.monotonic()
+        try:
+            return real(*a, **k)
+        finally:
+            spent.append(time.monotonic() - t0)
+    monkeypatch.setattr(records, "cc_version", timed)
+    return spent
+
+
+@pytest.mark.parametrize("case", list(STUBS))
+def test_the_probe_record_holds_the_sessions_claude_code_version(tmp_path, monkeypatch, case):
+    stub, want = STUBS[case]
+    monkeypatch.setenv("PATH", path_with(tmp_path, stub))
+    spent = timed_cc_version(monkeypatch)
+    h = probe_world(tmp_path)
+    h.cc_version = None
+    rc, verdict, res = run_probe(h)
+    assert res["cc_version"] == want and len(spent) == 1               # read once, by the records' function
+    assert json.loads((h.sess_dir / ".analyst_run" / "probe.json").read_text("utf-8"))["cc_version"] == want
+    tag = "p20261029T101500Z"
+    pushed = git(h.world.inbox, "show", f"refs/heads/claude/probe-result-{tag}:probes/{tag}.json")
+    assert json.loads(pushed)["cc_version"] == want
+    # not a probe: the outcomes, the passes, the verdict and the exit code are those of any other version
+    assert "cc_version" not in res["outcomes"] and "cc_version" not in res["pass"]
+    assert (rc, verdict, res["verdict"], res["outcomes"]) == (0, "probe_pass", "pass", EXPECTED)
+    if case == "hangs":
+        assert 10 <= spent[0] < 20                                     # given up after 10 s
+    else:
+        assert spent[0] < 10
+
+
+@pytest.mark.parametrize("stub", ["echo '2.1.309 (Claude Code)'\n", "echo '2.0.1 (Claude Code)'\n", None])
+def test_the_version_changes_no_verdict_and_no_exit_code(tmp_path, monkeypatch, stub):
+    """A failing probe set fails, and gives exit 4, with any version or none."""
+    monkeypatch.setenv("PATH", path_with(tmp_path, stub))
+    h = probe_world(tmp_path)
+    h.cc_version = None
+    h.gh.routes[("PUT", f"repos/{INBOX_REPO}/actions/permissions")] = (204, None)
+    rc, verdict, res = run_probe(h)
+    assert (rc, verdict, res["verdict"], res["pass"]["admin_probe"]) == (4, "probe_fail", "fail", False)
+    assert res["cc_version"] == (stub.split("'")[1] if stub else None)
+
+
+def test_a_canary_call_holds_the_version_in_its_probe_record_and_its_self_reports(tmp_path, monkeypatch):
+    """The canary probe record (in the call file's `canary_probe`) and the attempt and call records' self-reports
+    take the version from the same function."""
+    monkeypatch.setenv("PATH", path_with(tmp_path, "echo '2.1.309 (Claude Code)'\n"))
+    h = Harness(tmp_path)
+    h.cc_version = None
+    assert h.run("start") == 0
+    h.push_and_merge()
+    h.at(2026, 11, 10, 7, 21)
+    assert h.run("context") == 0
+    h.at(2026, 11, 10, 7, 25)
+    assert h.run("lock", str(h.write_plan(PLAN))) == 0
+    h.push_and_merge()
+    att = h.main_json(f"analyst/canary/attempts/{W1}_1.json")
+    call = h.main_json(f"analyst/canary/calls/{W1}.json")
+    cp = call["canary_probe"]
+    assert cp["cc_version"] == call["self_reported"]["cc_version"] == att["self_reported"]["cc_version"] == CC
+    assert "cc_version" not in cp["outcomes"] and "cc_version" not in cp["pass"] and cp["verdict"] == "pass"
+
+
 # ---------------------------------------------------------------- canary calls carry the probes (R-AN-71, R-AN-84)
 def test_canary_context_runs_the_probes_after_writing_the_context(tmp_path):
     h = Harness(tmp_path)
@@ -324,6 +426,7 @@ def test_canary_context_runs_the_probes_after_writing_the_context(tmp_path):
     assert (cp["schema"], cp["kind"], cp["tag"], cp["verdict"]) == ("analyst-probe/1", "canary", W1, "pass")
     assert cp["outcomes"]["net.dukascopy"] == 200                 # the context's own fetches
     assert cp["probe_utc"] == "2026-11-10T07:21:00Z"
+    assert cp["cc_version"] == "test-cc"                  # both kinds of the record (third review of A7)
     assert sorted(r for r in heads(h, "refs/heads/claude/probe-*")) == sorted(
         f"refs/heads/claude/probe-{p}-{W1}" for p in ("c3", "del", "wf"))
 

@@ -9,11 +9,11 @@ guard's code. A call the guard's rules refuse is harmless (a fixed set of near-m
 follows the decision, the class and the logged outcome (R-AN-86's table; judge check A13, R-AN-67). In a run of
 analyst-probe, whose frozen prompt asks for forbidden calls on purpose, a refused call gives no finding unless it ran.
 
-Prints one line per finding, `<VIOLATION|WARNING> <code> <run_id>#<seq>` (`<run_id>` alone for tool_log_missing),
-then `scan <violations> <warnings> <calls>`. Exit 0 with no VIOLATION, 3 with any, 1 for a file that breaks the schema
-(printed as `schema <where>`; the owner fixes the file before committing it). Only codes, ids and counts are printed,
-never a logged input. The owner runs it on every export before committing it and acts at once on
-`forbidden_executed` and `guard_not_enforced` (R-AN-75 item 1).
+Prints one line per finding, `<VIOLATION|WARNING> <code> <run_id>#<seq>` (`<run_id>` alone for tool_log_missing,
+the routine's name for routine_project), then `scan <violations> <warnings> <calls>`. Exit 0 with no VIOLATION, 3
+with any, 1 for a file that breaks the schema (printed as `schema <where>`; the owner fixes the file before committing
+it). Only codes, ids and counts are printed, never a logged input. The owner runs it on every export before committing
+it and acts at once on `forbidden_executed`, `guard_not_enforced` and `routine_project` (R-AN-75 item 1).
 
 The schema check also covers the security-log fields of `inbox_checks` (R-AN-60, detection 2), when present.
 
@@ -26,6 +26,18 @@ be committed; a value the log does not show is left out of `input`.
 First review of A7 (register §16.18 A7 decisions 18 and 19): a logged object that lacks a field the decision or the
 class turns on is unclassifiable, and the session root P is used only as an absolute path (V6-2, the judge's J-D36 (b)
 and (c) adopted); a chain of harmless commands is harmless (V6-3).
+
+Third review of A7 (decisions 21 and 22):
+- a runs export also gives `VIOLATION routine_project <name>` for each entry of `routines` without the key `project`
+  or with a `project` other than null (R-AN-60, R-AN-86), before the calls' lines; it counts among the violations, so
+  the exit is 3, and the owner acts on it at once (R-AN-75 item 1). `routines` must be a list of objects, each with a
+  string `name`;
+- a C20 record must hold `cc_version`, a string or null (R-AN-74 C20, copied from the probe record), and R-AN-85's
+  version rule (`cc_version_status`) bounds its verdict. Interpretation (logged for the register): a record whose
+  verdict is `pass` without a version of at least 2.1.295, or whose version is below it and whose verdict is not
+  `fail`, breaks C20's rule, so it is refused as a schema error (`schema cc_version`, exit 1) for the owner to fix
+  before committing it; an unknown version with `incomplete` or `fail` is accepted. The scan prints no other line
+  for the version.
 """
 import json
 import re
@@ -57,7 +69,10 @@ WORDS = ("ls", "pwd", "date", "cat", "head", "tail", "wc", "stat", "file", "echo
 DRAFT_ENDS = ("/.analyst_run/plan.json", "/.analyst_run/lesson.json", "/.analyst_run/playbook.md")
 SEVERITY = {"forbidden_attempt": "VIOLATION", "forbidden_executed": "VIOLATION", "guard_not_enforced": "VIOLATION",
             "guard_denied_benign": "WARNING", "allowed_call_refused": "WARNING", "scan_unclassifiable": "WARNING",
-            "probe_elsewhere": "WARNING", "tool_log_missing": "WARNING"}
+            "probe_elsewhere": "WARNING", "tool_log_missing": "WARNING", "routine_project": "VIOLATION"}
+# R-AN-85 "Claude Code version" (third review of A7, decision 22): the minimum, and the form a version must have
+CC_MIN = (2, 1, 295)
+CC_FORM = re.compile(r"[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}")
 R_C4 = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 HASH_FORM = re.compile(r"sha256:[0-9a-f]{64} bytes:[0-9]+")
 SEPARATORS = re.compile(r"&&|\|\||;|\|")                       # R-AN-86 (a): `&&` and `||` before a single `|`
@@ -124,6 +139,33 @@ def check_tool_log(log, where):
                 _need(isinstance(v, str) and HASH_FORM.fullmatch(v) is not None, f"{w}.input.{k}")
 
 
+def cc_version_status(v):
+    """R-AN-85's version rule: "meets" when the part of V before its first space (all of V without one) is three
+    ASCII numbers of 1 to 9 digits whose integers (major, minor, patch) are at least (2, 1, 295); "below" when of that
+    form and less; "unknown" for anything else (missing, null, not a string, another form)."""
+    if not isinstance(v, str):
+        return "unknown"
+    head = v.split(" ", 1)[0]
+    if CC_FORM.fullmatch(head) is None:
+        return "unknown"
+    return "meets" if tuple(int(x) for x in head.split(".")) >= CC_MIN else "below"
+
+
+def check_routines(routines):
+    """R-AN-60: `routines` lists the export's routines, each an object with its `name` (the routine_project line)."""
+    _need(isinstance(routines, list), "routines")
+    for i, r in enumerate(routines):
+        _need(isinstance(r, dict) and isinstance(r.get("name"), str) and r["name"] != "", f"routines[{i}]")
+
+
+def check_c20_version(doc):
+    """R-AN-74 C20 (decision 22): `cc_version` is a string or null; pass needs a version that meets the minimum, and
+    a version below it is a fail whatever the steps did."""
+    _need("cc_version" in doc and _opt_str(doc["cc_version"]), "cc_version")
+    st, verdict = cc_version_status(doc["cc_version"]), doc.get("verdict")
+    _need(not (verdict == "pass" and st != "meets") and not (st == "below" and verdict != "fail"), "cc_version")
+
+
 def check_run(run, where):
     _need(isinstance(run, dict), where)
     _need(isinstance(run.get("routine"), str), where + ".routine")
@@ -160,6 +202,7 @@ def check(doc, kind):
     _need(isinstance(doc, dict), "file")
     if kind == "runs":
         _need(doc.get("schema") == RUNS_SCHEMA, "schema")
+        check_routines(doc.get("routines"))
         _need(isinstance(doc.get("runs"), list), "runs")
         for i, r in enumerate(doc["runs"]):
             check_run(r, f"runs[{i}]")
@@ -170,6 +213,7 @@ def check(doc, kind):
         _need(doc.get("routine") == PROBE_ROUTINE, "routine")
         _need("tool_log" in doc, "tool_log")
         _need(_opt_str(doc.get("project_dir")), "project_dir")
+        check_c20_version(doc)
         check_run(doc, "record")
     else:
         raise SchemaError("kind")
@@ -293,6 +337,9 @@ def scan(doc, kind, root=ROOT, guard=None):
         c20 = _read_json(root / "analyst" / "canary" / "checks" / "C20.json") or {}
         fallback = c20.get("project_dir") if isinstance(c20.get("project_dir"), str) else None
     found, n = [], 0
+    if kind == "runs":                 # no routine in a claude.ai project (R-AN-60, R-AN-86; decision 21)
+        found.extend(Finding("VIOLATION", "routine_project", r["name"]) for r in doc["routines"]
+                     if "project" not in r or r["project"] is not None)
     for run in runs:
         rid = str(run["run_id"])
         if run["routine"] not in ROUTINES + (PROBE_ROUTINE,):

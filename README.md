@@ -11,8 +11,9 @@ advice and it never trades. Nobody has shown that the analyst has an edge; the e
 - The routines are attached only to the agent inbox `Mohamedalhaaj/gold-analyst-inbox` (public, GitHub Actions
   disabled, no secret). Its `main` is a fast-forward copy of this repository's main, kept level by
   `analyst-inbox-mirror`; sessions clone it and push only to its `claude/analyst-*` branches. No session can write
-  this repository. No routine carries a claude.ai connector or plugin (`analyst/ROUTINE_CONFIG.json`, checked by
-  `tests/test_routine_config.py`).
+  this repository. No routine carries a claude.ai connector or plugin, and none is created from, or runs as threads
+  of, a claude.ai project, whose cloud threads run no repository hook (third review of A7): each routine of
+  `analyst/ROUTINE_CONFIG.json` records `project` null, checked by `tests/test_routine_config.py`.
 - `analyst-merge` (script only) runs main's code on a schedule (every 5 minutes around the windows, around the lesson
   and revision routines, and hourly) and by hand. It reads the inbox's activity in full or stops before writing
   anything, fetches each pushed commit from the inbox as data, checks the path allowlist, takes the push's server
@@ -28,7 +29,9 @@ advice and it never trades. Nobody has shown that the analyst has an edge; the e
 - `analyst-track` follows an open paper trade hour by hour for display only; `analyst-deploy` builds and deploys the
   Arabic page `/analyst/` when merge, settle or track dispatch it after a commit (and once a day).
 - `python3 analyst/run_window.py probe` runs the session probes (register R-AN-84) without a window; canary calls run
-  them inside `context`.
+  them inside `context`. The record also holds `cc_version`, the session's Claude Code version (the first line of
+  `claude --version`, as in the attempt and call records); it is not a probe and changes no verdict. C20 passes only
+  with 2.1.295 or later, which the hook's `onFailure` requires.
 - The session guard (register R-AN-85, §16.18 A7): `.claude/settings.json` runs `.claude/hooks/guard.py` before every
   tool call of a session (a PreToolUse hook for every tool, `onFailure: block`) and denies WebFetch, WebSearch, Agent
   and Skill as a second layer. The guard lets through only the nine command lines of `analyst/ROUTINE_PROMPT.md` and
@@ -47,7 +50,9 @@ advice and it never trades. Nobody has shown that the analyst has an edge; the e
   VIOLATION, 1 for a file that breaks the schema (Write and Edit text must be copied as hashes, never as text). A
   field the run log does not show is left out of the call's input; a call whose input lacks a field the rules need
   (Bash `command`, a file tool's path, Write's `content`) is `scan_unclassifiable`, a WARNING. A chain of harmless
-  commands (`cat x; ls`, `cat x | head`) is a harmless near-miss, as a `cd` prefix is.
+  commands (`cat x; ls`, `cat x | head`) is a harmless near-miss, as a `cd` prefix is. A runs export also gives
+  `VIOLATION routine_project <name>` for a routine whose `project` is missing or not null, and a C20 record's verdict
+  must agree with its `cc_version` (pass needs 2.1.295 or later).
 - `analyst/MODE.json` selects `canary` (records under `analyst/canary/`, never settled or shown), `live` or `off`.
 
 ## Layout

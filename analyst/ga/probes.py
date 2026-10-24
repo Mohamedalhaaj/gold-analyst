@@ -13,7 +13,9 @@ refusal, the timeout included) or `error` (it could not be set up); a REST probe
 (the proxy's "GitHub access to ... is not enabled for this session"), `denied`, or `none` (no response, a 5xx, or no
 gh); `rest.hooks` gives the length of the hook list instead of `ok`; `activity_seen_s` the seconds from a push to the
 first activity answer listing it, or -1. The record keeps only integers, enums and booleans; no remote output text
-is kept or printed. Interpretations (logged for the register): a probe not run in time has outcome null; a canary
+is kept or printed. Its one string is `cc_version` (third review of §16.18 A7, decision 22), which the session adds to
+both kinds after the probes (Session.run_probes): its Claude Code version, local output, not a probe, in neither
+`outcomes` nor `pass`. Interpretations (logged for the register): a probe not run in time has outcome null; a canary
 context that fetched no hour file probes Dukascopy with the `probe` GET; probe commits carry head's commit time, so a
 re-run on the same head pushes the same commits.
 

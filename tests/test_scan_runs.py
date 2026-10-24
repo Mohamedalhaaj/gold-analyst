@@ -4,6 +4,11 @@ Every tool call of a routine run, as the owner copies it from the run log, is de
 (the guard's code, imported by its path) and classed harmless or forbidden; the finding follows the decision, the
 class and the logged outcome. One planted call per row of R-AN-86's table, a condensed log, an unknown project_dir,
 an `analyst-probe` run, the run without a log, the schema (no model text may be copied) and the command line.
+
+Third review of §16.18 A7: a runs export's routine whose `project` is missing or not null is `VIOLATION
+routine_project <name>` (decision 21, R-AN-60, R-AN-86); a C20 record's `cc_version` follows R-AN-85's version rule,
+and its verdict cannot be `pass` without a version of at least 2.1.295, nor anything but `fail` with a lower one
+(decision 22, R-AN-74 C20).
 """
 import copy
 import json
@@ -24,6 +29,7 @@ GUARD_DENIAL = ("PreToolUse:Bash hook error: guard: bash_form: run only the comm
                 "it. Do not try another way.")
 RULE_DENIAL = "Permission to use WebFetch has been denied."
 H = "sha256:" + "0" * 64 + " bytes:"
+CC = "2.1.309 (Claude Code)"                       # `claude --version`'s first line on the owner's Mac, 2026-10-24
 
 
 def call(tool, inp=None, outcome="executed", denial=None, text=None, agent=None):
@@ -340,7 +346,7 @@ def test_other_routines_are_not_scanned(root):
 
 def c20(calls):
     return {"schema": "analyst-check-c20/1", "run_id": "run_c20", "session_id": None,
-            "created_utc": "2026-10-25T12:00:00Z", "routine": "analyst-probe", "project_dir": P, "cc_version": None,
+            "created_utc": "2026-10-25T12:00:00Z", "routine": "analyst-probe", "project_dir": P, "cc_version": CC,
             "environment_variables": 0, "guard_sha256": {}, "tool_log": {"form": "full", "project_dir": None,
                                                                          "calls": [dict(c, seq=j + 1)
                                                                                    for j, c in enumerate(calls)]},
@@ -383,6 +389,11 @@ SCHEMA_BREAKS = [
     ("model_text_edit", lambda d: d["runs"][0]["tool_log"]["calls"][2]["input"].update(new_string="شرح")),
     ("model_text_multiedit", lambda d: d["runs"][0]["tool_log"]["calls"][3]["input"].update(edits=[{"a": 1}])),
     ("not_an_object", lambda d: d.clear() or d.update(x=1)),
+    # third review of A7 (decision 21): the routines list, whose entries the scan reads for `project`
+    ("routines", lambda d: d.update(routines={})),
+    ("routines_missing", lambda d: d.pop("routines")),
+    ("routine_entry", lambda d: d.update(routines=["analyst-w1"])),
+    ("routine_name", lambda d: d.update(routines=[{"project": None}])),
 ]
 
 
@@ -407,6 +418,119 @@ def test_a_c20_record_needs_the_probe_routine_and_a_log(root):
         brk(doc)
         with pytest.raises(scan_runs.SchemaError):
             scan_runs.scan(doc, "c20", root=root)
+
+
+# ---------------------------------------------------------------- third review of A7, decision 21: routine_project
+def with_routines(*entries):
+    doc = export(("analyst-w1", [call("Bash", {"command": L + "start"}),
+                                 call("Bash", {"command": "curl https://example.com"}, "denied", GUARD_DENIAL)]))
+    doc["routines"] = [dict(e) for e in entries]
+    return doc
+
+
+def routine(name, **kw):
+    return dict({"name": name, "trigger_id": "trig_" + name, "model": "claude-opus-5-5", "effort": None,
+                 "crons": [], "enabled": True}, **kw)
+
+
+def test_a_routine_without_a_project_gives_no_finding(root):
+    doc = with_routines(*(routine(n, project=None) for n in scan_runs.ROUTINES + (scan_runs.PROBE_ROUTINE,)))
+    assert findings(doc, root)[0] == [("VIOLATION", "forbidden_attempt", "run_01#2")]
+
+
+def test_a_routine_in_a_project_or_without_the_key_is_routine_project(root):
+    """R-AN-60, R-AN-86 (decision 21): one line per entry of `routines` without the key `project` or with a value
+    other than null, in the export's order and before the calls' findings; each counts among the violations."""
+    doc = with_routines(routine("analyst-w1", project=None), routine("analyst-w2"),
+                        routine("analyst-lesson", project="Gold analyst"), routine("analyst-revision", project=""),
+                        routine("analyst-probe", project=False), routine("analyst-old", project={"id": 1}))
+    got, res = findings(doc, root)
+    assert got == [("VIOLATION", "routine_project", "analyst-w2"), ("VIOLATION", "routine_project", "analyst-lesson"),
+                   ("VIOLATION", "routine_project", "analyst-revision"),
+                   ("VIOLATION", "routine_project", "analyst-probe"), ("VIOLATION", "routine_project", "analyst-old"),
+                   ("VIOLATION", "forbidden_attempt", "run_01#2")]
+    assert (res.violations, res.warnings, res.calls) == (6, 0, 2)
+
+
+def test_routine_project_is_reported_whatever_the_export_date(root):
+    """Unlike tool_log_missing, the rule has no date: it is read again in every export, PINS.inbox_from_utc null
+    included."""
+    (root / "analyst" / "PINS.json").write_text(json.dumps({"inbox_from_utc": None}))
+    got, res = findings(with_routines(routine("analyst-w1")), root)
+    assert got[0] == ("VIOLATION", "routine_project", "analyst-w1") and res.violations == 2
+
+
+def test_routine_project_on_the_command_line(tmp_path):
+    f = tmp_path / "2026-W44.json"
+    doc = export(("analyst-w1", [call("Bash", {"command": L + "start"})]))
+    doc["routines"] = [routine("analyst-w1", project=None), routine("analyst-w2", project="Gold analyst")]
+    f.write_text(json.dumps(doc))
+    assert cli(f)[:2] == (3, ["VIOLATION routine_project analyst-w2", "scan 1 0 1"])
+    doc["routines"][1]["project"] = None
+    f.write_text(json.dumps(doc))
+    assert cli(f)[:2] == (0, ["scan 0 0 1"])
+
+
+def test_a_c20_record_has_no_routine_project_check(root):
+    """A C20 record has no `routines`: the rule is a runs export's (R-AN-86)."""
+    doc = c20(probe_calls())
+    doc["routines"] = [routine("analyst-probe", project="Gold analyst")]
+    assert findings(doc, root, kind="c20")[0] == []
+
+
+# ---------------------------------------------------------------- third review of A7, decision 22: the version
+@pytest.mark.parametrize("v,status", [
+    ("2.1.295", "meets"), (CC, "meets"), ("2.2.0", "meets"), ("3.0.0", "meets"), ("2.1.1000", "meets"),
+    ("10.0.0 (Claude Code)", "meets"), ("2.1.295 ", "meets"), ("002.001.0295", "meets"),
+    ("2.1.294", "below"), ("2.0.999", "below"), ("1.99.999 (Claude Code)", "below"), ("0.0.0", "below"),
+    (None, "unknown"), (2.1, "unknown"), (["2.1.309"], "unknown"), ("v2.1.309", "unknown"),
+    ("2.1.309-beta", "unknown"), ("2.1", "unknown"), ("", "unknown"), (" 2.1.309", "unknown"),
+    ("2.1.309\t(Claude Code)", "unknown"), ("2.1.309\n", "unknown"), ("Claude Code 2.1.309", "unknown"),
+    ("1234567890.1.1", "unknown"), ("2.1.\u0662\u0669\u0665", "unknown"), ("2..1.309", "unknown"),
+    ("+2.1.309", "unknown"), ("2.1.309.1", "unknown"),
+])
+def test_the_version_rule(v, status):
+    """R-AN-85 "Claude Code version": the part before the first space must be three ASCII numbers of 1 to 9 digits,
+    compared as at least (2, 1, 295); anything else is unknown."""
+    assert scan_runs.cc_version_status(v) == status
+
+
+@pytest.mark.parametrize("v,verdict,ok", [
+    (CC, "pass", True), (CC, "fail", True), (CC, "incomplete", True), ("2.1.295", "pass", True),
+    ("2.1.294", "pass", False), ("2.1.294", "incomplete", False), ("2.1.294", "fail", True),
+    (None, "pass", False), (None, "incomplete", True), (None, "fail", True),
+    ("v2.1.309", "pass", False), ("v2.1.309", "incomplete", True),
+])
+def test_a_c20_records_verdict_follows_its_cc_version(root, v, verdict, ok):
+    """R-AN-74 C20: pass needs a cc_version of at least 2.1.295; one below it is a fail whatever the steps did; an
+    unknown one, the steps otherwise passing, leaves C20 incomplete (a fail stays a fail)."""
+    doc = c20(probe_calls())
+    doc.update(cc_version=v, verdict=verdict)
+    if ok:
+        assert findings(doc, root, kind="c20")[0] == []
+    else:
+        with pytest.raises(scan_runs.SchemaError, match="cc_version"):
+            scan_runs.scan(doc, "c20", root=root)
+
+
+def test_a_c20_record_needs_cc_version(root):
+    for brk in (lambda d: d.pop("cc_version"), lambda d: d.update(cc_version=2), lambda d: d.update(cc_version={})):
+        doc = c20(probe_calls())
+        doc["verdict"] = "incomplete"
+        brk(doc)
+        with pytest.raises(scan_runs.SchemaError, match="cc_version"):
+            scan_runs.scan(doc, "c20", root=root)
+
+
+def test_a_c20_record_with_an_old_version_and_pass_is_a_schema_error_on_the_command_line(tmp_path):
+    f = tmp_path / "C20.json"
+    doc = c20(probe_calls())
+    doc["cc_version"] = "2.1.294 (Claude Code)"
+    f.write_text(json.dumps(doc))
+    assert cli(f)[:2] == (1, ["schema cc_version"])
+    doc["verdict"] = "fail"
+    f.write_text(json.dumps(doc))
+    assert cli(f)[:2] == (0, ["scan 0 0 11"])
 
 
 def cli(path):

@@ -5,9 +5,10 @@ C7; §16.18 A6 fourth review: J-4, N2).
   verdict makes no PAUSED, RESUMED or RETIRED event: the owner's C7 tamper pushes and the probe session never reach
   `analyst/state/`, and need no analyst-side clear.
 - Operational keys (every `A0|` key, every `system_error:` entry, A12 `probe_failed`, `app_scope`,
-  `routine_connectors`, `inbox_identity`, `inbox_config`) and every key before LS are mirrored: paused while a fresh
-  verdict carries them, lifted (`lifted:`) when one does not; an analyst-side row does nothing for them, and they
-  never retire the analyst. So an earlier clear or lift never mutes a later episode.
+  `routine_connectors`, `inbox_identity`, `inbox_config`; since §16.18 A7 A13 `guard_not_enforced`, `guard_config`,
+  and since its third review `routine_project`, `cc_version_below`, `cc_version_unknown`) and every key before LS
+  are mirrored: paused while a fresh verdict carries them, lifted (`lifted:`) when one does not; an analyst-side row
+  does nothing for them, and they never retire the analyst. So an earlier clear or lift never mutes a later episode.
 - In the live period an integrity key pauses until an analyst-side clear dated at or after its PAUSED event; a new
   integrity key after such a live clear retires the analyst. A clear of a canary pause, or a row dated before the
   pause, arms nothing.
@@ -140,6 +141,12 @@ GUARD_NOT_ENFORCED = "A13|guard_not_enforced|analyst/runs/2026-W46.json|run_01#4
 GUARD_CONFIG = "A13|guard_config|.claude/settings.json|absent"
 FORBIDDEN = ["A13|forbidden_attempt|analyst/runs/2026-W46.json|run_01#5",
              "A13|forbidden_executed|analyst/runs/2026-W46.json|run_01#6"]
+# third review of §16.18 A7 (decisions 21 and 22; R-AN-55, R-AN-67 A13): a routine in a claude.ai project, and a
+# guarded session on a Claude Code version below the guard's minimum or of an unknown version, are the system's fault
+# too (operational): they pause and never retire
+ROUTINE_PROJECT = "A13|routine_project|analyst/ROUTINE_CONFIG.json|" + "e" * 40
+CC_BELOW = "A13|cc_version_below|analyst/attempts/2026-11-11_W1_1.json|" + "f" * 40
+CC_UNKNOWN = "A13|cc_version_unknown|analyst/attempts/2026-11-11_W2_1.json|" + "0" * 40
 
 
 def arm(b):
@@ -168,7 +175,10 @@ def test_a_live_integrity_key_pauses_and_after_its_clear_a_new_one_retires():
 
 @pytest.mark.parametrize("key", [PROBE, SYSERR, CONFIG, BLIND1, "A12|app_scope|analyst/runs/2026-W46.json|x",
                                  "A12|routine_connectors|analyst/ROUTINE_CONFIG.json|x",
-                                 "A12|inbox_identity|inbox|404", GUARD_NOT_ENFORCED, GUARD_CONFIG])
+                                 "A12|inbox_identity|inbox|404", GUARD_NOT_ENFORCED, GUARD_CONFIG,
+                                 ROUTINE_PROJECT, CC_BELOW, CC_UNKNOWN,
+                                 "A13|routine_project|analyst/runs/2026-W46.json|" + "1" * 40,
+                                 "A13|cc_version_below|analyst/canary/calls/2026-11-11_W1.json|" + "2" * 40])
 def test_an_operational_key_in_the_live_period_pauses_is_lifted_and_never_retires(key):
     b = Book(**LIVE)
     arm(b)
@@ -408,6 +418,8 @@ def test_a13_forbidden_calls_are_integrity_keys(key):
     new one retires the analyst; guard_not_enforced and guard_config are operational (above)."""
     assert not state.operational(key)
     assert state.operational(GUARD_NOT_ENFORCED) and state.operational(GUARD_CONFIG)
+    assert state.operational(ROUTINE_PROJECT) and state.operational(CC_BELOW) and state.operational(CC_UNKNOWN)
+    assert not state.operational("A12|routine_project|analyst/ROUTINE_CONFIG.json|x")    # the A13 codes only
     assert not state.operational("A13|guard_denied_benign|analyst/runs/2026-W46.json|run_01#2")
     b = Book(**LIVE)
     arm(b)

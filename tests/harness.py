@@ -43,6 +43,7 @@ class Harness:
         self.merge_fail = False
         self.auto_mirror = True
         self.runner = None
+        self.cc_version = "test-cc"          # None: the session reads `claude --version` itself (records.cc_version)
 
     def now(self):
         return self.t[0]
@@ -55,7 +56,7 @@ class Harness:
         d = sess_dir or self.sess_dir
         return Session(d, git=gitops.Git(d), now=self.now, http_get=self.feed, mono=self.clk.mono,
                        sleep=self.clk.sleep, env={"CLAUDE_CODE_SESSION_ID": "sess-1"}, probe_get=self.probe_get,
-                       cc_version="test-cc", out=self.log.append, gh=self.gh, direct_url=self.world.direct_url)
+                       cc_version=self.cc_version, out=self.log.append, gh=self.gh, direct_url=self.world.direct_url)
 
     def run(self, step, *a, sess_dir=None, **kw):
         self.world.deny_main(True)

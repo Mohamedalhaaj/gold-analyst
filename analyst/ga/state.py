@@ -13,7 +13,8 @@ settle run:
   nothing;
 - before P0 (00:00Z of the earliest set date of canary_from and live_from) the verdict makes no event at all;
 - operational keys (A0, system_error:, A12 probe_failed / app_scope / routine_connectors / inbox_identity /
-  inbox_config, A13 guard_not_enforced / guard_config) and every key before LS (00:00Z of live_from) are mirrored:
+  inbox_config, A13 guard_not_enforced / guard_config, and since the third review of §16.18 A7 A13 routine_project /
+  cc_version_below / cc_version_unknown) and every key before LS (00:00Z of live_from) are mirrored:
   paused while a fresh verdict carries them, lifted (`lifted:`) when it does not, never cleared by an analyst-side
   row and never a cause of retirement;
 - a live integrity key pauses until an analyst-side clear dated at or after its PAUSED event; a new live integrity
@@ -47,7 +48,9 @@ SILENT_AFTER = dt.timedelta(hours=48)       # judge_silent: no fresh verdict for
 JUDGE = "judge_violation:"
 JUDGE_SILENT = "judge_silent"
 OPERATIONAL_A12 = ("probe_failed", "app_scope", "routine_connectors", "inbox_identity", "inbox_config")
-OPERATIONAL_A13 = ("guard_not_enforced", "guard_config")    # the session guard not acting, or its files (§16.18 A7)
+# the session guard not acting, or its files (§16.18 A7); a routine in a claude.ai project, or a harness that may not
+# keep the guard closed (its third review, decisions 21 and 22)
+OPERATIONAL_A13 = ("guard_not_enforced", "guard_config", "routine_project", "cc_version_below", "cc_version_unknown")
 LEDGER_COLS = ["call_id", "model_day", "window", "class", "terminal_status", "status", "detail", "action", "side",
                "stop_mult", "target_mult", "confidence", "D_ref", "S", "T", "lock_utc", "attempts", "entry_utc",
                "exit_utc", "P_e", "X", "Tg", "exit_minute_utc", "P_x", "reason", "fill", "gross_usd", "cost_usd",
@@ -164,7 +167,9 @@ def first_seen_times(verdict):
 def operational(key):
     """An operational VIOLATION key (R-AN-55, R-AN-67): the judge cannot see, a system error, the sandbox leaked, or
     the owner's own configuration; since §16.18 A7 also the session guard not acting or its files wrong (A13
-    guard_not_enforced, guard_config). It pauses while the verdict carries it and never retires the analyst. A13
+    guard_not_enforced, guard_config), and since its third review a routine in a claude.ai project or a guarded
+    session on a Claude Code version below the guard's minimum or of an unknown version (A13 routine_project,
+    cc_version_below, cc_version_unknown). It pauses while the verdict carries it and never retires the analyst. A13
     forbidden_attempt and forbidden_executed are integrity keys."""
     if key.startswith(("A0|", "system_error:")):
         return True
