@@ -184,8 +184,8 @@ def _rule(p, v, kind):
         return v == "ok"
     if p in ("rest.ga", "rest.gfw", "admin_probe"):
         return v in ("scope", "denied")
-    if p == "rest.hooks":
-        return (v == 0) if _is_int(v) else None
+    if p == "rest.hooks":                   # denied/scope: the session cannot reach the hooks API (§16.18 A8)
+        return (v == 0) if _is_int(v) else (True if v in ("denied", "scope") else None)
     if p in ("rest.force_main", "rest.tag_create", "rest.delete_branch"):
         return v in ("denied", "scope")     # refused either way; only `ok` fails (fourth review of §16.18 A6)
     if p == "git.ls_remote_inbox":

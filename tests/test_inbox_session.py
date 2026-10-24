@@ -243,7 +243,7 @@ def test_activity_seen_s_measures_the_listing_delay(tmp_path):
     ({"ga_push": "refused_rule"}, "ga_push", False),
     ({"ga_push": "accepted"}, "ga_push", False),
     ({"push_main": "refused"}, "push_main", True),
-    ({"rest.hooks": "denied"}, "rest.hooks", None),
+    ({"rest.hooks": "denied"}, "rest.hooks", True),                     # §16.18 A8: the hooks API is out of reach
     ({"rest.hooks": 2}, "rest.hooks", False),
     ({"net.google": 302}, "net.google", False),
     ({"net.google": 403}, "net.google", True),

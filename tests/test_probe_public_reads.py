@@ -27,3 +27,17 @@ def test_the_first_probe_session_fails_only_on_the_dukascopy_outage():
 def test_refused_public_reads_still_pass():
     out = {p: "refused" for p in PUBLIC}
     assert all(probes.passes(out, "probe")[p] is None for p in PUBLIC)
+
+
+def test_a_denied_webhook_list_passes():
+    """§16.18 A8, added with the client's approval of 2026-10-24: the session cannot reach the hooks API."""
+    for v in ("denied", "scope", 0):
+        assert probes.passes({"rest.inbox": "ok", "rest.hooks": v}, "probe")["rest.hooks"] is True
+    assert probes.passes({"rest.inbox": "ok", "rest.hooks": 1}, "probe")["rest.hooks"] is False
+    assert probes.passes({"rest.inbox": "ok", "rest.hooks": "ok"}, "probe")["rest.hooks"] is None
+
+
+def test_the_first_probe_session_passes_once_dukascopy_answers():
+    rec = json.loads((ROOT / "analyst/canary/checks/PROBE_p20261024T024852Z.json").read_text("utf-8"))
+    out = dict(rec["outcomes"], **{"net.dukascopy": 200})
+    assert probes.verdict(probes.passes(out, rec["kind"])) == "pass"
