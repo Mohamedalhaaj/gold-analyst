@@ -60,7 +60,8 @@ ORDER = ("net.dukascopy", "net.google", "net.raw_public", "net.api_root",
          "push_main", "force_main", "rest.force_main", "tag_push", "rest.tag_create", "other_branch_push",
          "branch_delete", "activity_seen_s", "rest.delete_branch",
          "ga_push", "ga_push_proxy", "workflow_push", "admin_probe")
-MEASURED = ("net.api_root", "activity_seen_s")
+MEASURED = ("net.api_root", "activity_seen_s",       # measured: recorded, never a pass or a fail
+            "git.ls_remote_public", "git.ls_remote_public_proxy")    # public git reads (§16.18 A8)
 RECORD_NULL = ("workflow_push",)            # judged from the inbox's runs (A12 inbox_runs), null in the record
 REST = ("rest.inbox", "rest.ga", "rest.gfw", "rest.hooks", "rest.force_main", "rest.tag_create",
         "rest.delete_branch", "admin_probe")

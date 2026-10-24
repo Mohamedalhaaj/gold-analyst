@@ -137,8 +137,7 @@ def test_probe_subcommand_in_a_conforming_inbox(tmp_path):
     assert set(res["outcomes"]) == set(res["pass"]) == set(probes.ORDER)
     assert res["pass"]["net.api_root"] is None and res["pass"]["activity_seen_s"] is None
     assert res["pass"]["workflow_push"] is None
-    assert all(v is True for k, v in res["pass"].items() if k not in ("net.api_root", "activity_seen_s",
-                                                                      "workflow_push"))
+    assert all(v is True for k, v in res["pass"].items() if k not in probes.MEASURED + ("workflow_push",))
     # the record, as written and as pushed (one new commit on inbox main, on claude/probe-result-<tag>)
     local = (h.sess_dir / ".analyst_run" / "probe.json").read_bytes()
     assert local == rec.record_bytes(res)
