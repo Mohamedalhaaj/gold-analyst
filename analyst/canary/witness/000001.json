@@ -1,0 +1,38 @@
+{
+ "comment": {
+  "body_sha256": "1e0213dab63761a8d97149a23146bb2c74e7ca28e70b008071c4805617bcc73b",
+  "created_utc": "2026-10-24T02:47:31Z",
+  "id": 6378929885,
+  "issue": 1
+ },
+ "file_sha256": null,
+ "id": null,
+ "kind": "push",
+ "mode": "canary",
+ "path": "analyst/c7_extra.json",
+ "push": {
+  "activity_id": 47590638710,
+  "activity_type": "branch_creation",
+  "activity_utc": "2026-10-24T02:47:08Z",
+  "actor": "Mohamedalhaaj",
+  "after": "e0397779638e3b6aff11847d2f18653844c8a6fe",
+  "before": "0000000000000000000000000000000000000000",
+  "ref": "refs/heads/claude/analyst-c7-extra",
+  "repo": "Mohamedalhaaj/gold-analyst-inbox"
+ },
+ "reason": "agent_scope",
+ "run": {
+  "attempt": 1,
+  "created_utc": "2026-10-24T02:47:25Z",
+  "event": "workflow_dispatch",
+  "id": 40055633417,
+  "workflow": "analyst-merge"
+ },
+ "schema": "analyst-witness/1",
+ "seq": 1,
+ "status": "rejected",
+ "terminal": null,
+ "window": null,
+ "writes": [],
+ "written_utc": "2026-10-24T02:47:31Z"
+}
