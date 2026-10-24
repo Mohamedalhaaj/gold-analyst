@@ -1,6 +1,6 @@
 {
- "exported_utc": "2026-10-23T08:52:00Z",
- "note": "First export, right after the routines were created (register R-AN-61). raw = the RemoteTrigger response fields that define the routine; the creator's account fields are left out. Connectors: none (claude.ai attached every account connector by default at creation; they were cleared before any fire).",
+ "exported_utc": "2026-10-24T02:47:00Z",
+ "note": "Export after repointing the four routines to the inbox and creating analyst-probe (register R-AN-61, §16.18 A6 and A7), all DISABLED until canary_from is set; a fresh export follows when they are switched on. raw = the RemoteTrigger update/create responses that define each routine; the creator's account fields are left out. Connectors and plugins: none (claude.ai attached every account connector when analyst-probe was created; they were cleared at 02:45:38Z, before any fire). project: null for every routine. Sources read for project: the RemoteTrigger responses (no field whose name contains project, at any depth), and the routines were created and updated only with RemoteTrigger create and update (created_via http_api), never from a claude.ai project. Environment gold-analyst read at claude.ai/code on 2026-10-24 02:44Z: Limited network, allowed domain datafeed.dukascopy.com only, package managers off, no network secrets, no setup script, no environment variables. analyst-probe has a placeholder yearly cron and stays disabled: it is fired with run-now only.",
  "routines": [
   {
    "allowed_tools": [
@@ -12,31 +12,44 @@
     "20 6,7 * * 1-5"
    ],
    "effort": null,
-   "enabled": true,
+   "enabled": false,
    "environment": {
     "id": "env_01REwcJo2NSGXn64reopcvds",
     "name": "gold-analyst",
+    "network": {
+     "allow": [
+      "datafeed.dukascopy.com"
+     ],
+     "mode": "custom",
+     "note": "The GitHub proxy is reachable at every network level and serves only the attached inbox. The session steps import only the standard library and analyst/vendor (tests/test_layout.py), so no package install is needed. Disclosed: through the inbox's webhooks GitHub itself can still reach any address for a session (R-AN-75 item 2); no network setting closes that. Since §16.18 A7 the session guard (.claude/hooks/guard.py, R-AN-85) refuses every call that could create one, and the run-log scan (R-AN-86) and the security log (R-AN-60) detect what it could miss.",
+     "package_managers": "off"
+    },
     "secrets": "none",
-    "setup": "none"
+    "setup": "none",
+    "variables": "none"
    },
    "model": "claude-opus-5-5",
    "name": "analyst-w1",
    "network": {
     "allow": [
-     "the git proxy (default)",
      "datafeed.dukascopy.com"
     ],
-    "mode": "limited",
-    "package_managers": "on at export (to be turned off once the canary shows no install is needed)"
+    "mode": "custom",
+    "note": "The GitHub proxy is reachable at every network level and serves only the attached inbox. The session steps import only the standard library and analyst/vendor (tests/test_layout.py), so no package install is needed. Disclosed: through the inbox's webhooks GitHub itself can still reach any address for a session (R-AN-75 item 2); no network setting closes that. Since §16.18 A7 the session guard (.claude/hooks/guard.py, R-AN-85) refuses every call that could create one, and the run-log scan (R-AN-86) and the security log (R-AN-60) detect what it could miss.",
+    "package_managers": "off"
    },
+   "project": null,
    "prompt_sha256": "62f959195835d02f77761ea65f941d9e435175ae0ebf240ff7f9eda16d96b0fa",
    "raw": {
     "created_at": "2026-10-23T08:50:15.270394Z",
+    "created_kind": "ROUTINE_CREATED_KIND_UNSPECIFIED",
+    "created_surface": "ROUTINE_CREATED_SURFACE_UNSPECIFIED",
     "created_via": "http_api",
     "cron_expression": "20 6,7 * * 1-5",
-    "enabled": true,
+    "enabled": false,
     "enabled_plugins": [],
     "ended_reason": "",
+    "extra_marketplaces": [],
     "id": "trig_01VcWkaMs4sHRnwM9TRNqw3s",
     "job_config": {
      "ccr": {
@@ -65,7 +78,7 @@
        "sources": [
         {
          "git_repository": {
-          "url": "https://github.com/Mohamedalhaaj/gold-analyst"
+          "url": "https://github.com/Mohamedalhaaj/gold-analyst-inbox"
          }
         }
        ]
@@ -74,11 +87,42 @@
     },
     "mcp_connections": [],
     "name": "analyst-w1",
+    "next_run_at": "2026-10-26T06:20:00Z",
     "persist_session": false,
+    "session_request": {
+     "config": {
+      "account_plugins": [],
+      "account_skills": [],
+      "allowed_tools": [
+       "Bash",
+       "Read",
+       "Write"
+      ],
+      "auto_mode_allow": [],
+      "auto_mode_environment": [],
+      "auto_mode_soft_deny": [],
+      "builtin_tools": [],
+      "disallowed_tools": [],
+      "mcp_servers": [],
+      "model": "claude-opus-5-5",
+      "sources": [
+       {
+        "sparse_checkout_exclude_patterns": [],
+        "sparse_checkout_paths": [],
+        "type": "git_repository",
+        "url": "https://github.com/Mohamedalhaaj/gold-analyst-inbox"
+       }
+      ],
+      "subagents": [],
+      "worktree": false
+     },
+     "environment_id": "env_01REwcJo2NSGXn64reopcvds",
+     "environment_variables": {}
+    },
     "suspension_reason": "",
-    "updated_at": "2026-10-23T08:50:21.385601Z"
+    "updated_at": "2026-10-24T02:43:43.647186Z"
    },
-   "repo": "Mohamedalhaaj/gold-analyst",
+   "repo": "Mohamedalhaaj/gold-analyst-inbox",
    "trigger_id": "trig_01VcWkaMs4sHRnwM9TRNqw3s"
   },
   {
@@ -91,31 +135,44 @@
     "50 12,13 * * 1-5"
    ],
    "effort": null,
-   "enabled": true,
+   "enabled": false,
    "environment": {
     "id": "env_01REwcJo2NSGXn64reopcvds",
     "name": "gold-analyst",
+    "network": {
+     "allow": [
+      "datafeed.dukascopy.com"
+     ],
+     "mode": "custom",
+     "note": "The GitHub proxy is reachable at every network level and serves only the attached inbox. The session steps import only the standard library and analyst/vendor (tests/test_layout.py), so no package install is needed. Disclosed: through the inbox's webhooks GitHub itself can still reach any address for a session (R-AN-75 item 2); no network setting closes that. Since §16.18 A7 the session guard (.claude/hooks/guard.py, R-AN-85) refuses every call that could create one, and the run-log scan (R-AN-86) and the security log (R-AN-60) detect what it could miss.",
+     "package_managers": "off"
+    },
     "secrets": "none",
-    "setup": "none"
+    "setup": "none",
+    "variables": "none"
    },
    "model": "claude-opus-5-5",
    "name": "analyst-w2",
    "network": {
     "allow": [
-     "the git proxy (default)",
      "datafeed.dukascopy.com"
     ],
-    "mode": "limited",
-    "package_managers": "on at export (to be turned off once the canary shows no install is needed)"
+    "mode": "custom",
+    "note": "The GitHub proxy is reachable at every network level and serves only the attached inbox. The session steps import only the standard library and analyst/vendor (tests/test_layout.py), so no package install is needed. Disclosed: through the inbox's webhooks GitHub itself can still reach any address for a session (R-AN-75 item 2); no network setting closes that. Since §16.18 A7 the session guard (.claude/hooks/guard.py, R-AN-85) refuses every call that could create one, and the run-log scan (R-AN-86) and the security log (R-AN-60) detect what it could miss.",
+    "package_managers": "off"
    },
+   "project": null,
    "prompt_sha256": "62f959195835d02f77761ea65f941d9e435175ae0ebf240ff7f9eda16d96b0fa",
    "raw": {
     "created_at": "2026-10-23T08:50:27.904632Z",
+    "created_kind": "ROUTINE_CREATED_KIND_UNSPECIFIED",
+    "created_surface": "ROUTINE_CREATED_SURFACE_UNSPECIFIED",
     "created_via": "http_api",
     "cron_expression": "50 12,13 * * 1-5",
-    "enabled": true,
+    "enabled": false,
     "enabled_plugins": [],
     "ended_reason": "",
+    "extra_marketplaces": [],
     "id": "trig_01RHb8M3VHaSk34Zsw42tQSf",
     "job_config": {
      "ccr": {
@@ -144,7 +201,7 @@
        "sources": [
         {
          "git_repository": {
-          "url": "https://github.com/Mohamedalhaaj/gold-analyst"
+          "url": "https://github.com/Mohamedalhaaj/gold-analyst-inbox"
          }
         }
        ]
@@ -153,11 +210,42 @@
     },
     "mcp_connections": [],
     "name": "analyst-w2",
+    "next_run_at": "2026-10-23T12:50:00Z",
     "persist_session": false,
+    "session_request": {
+     "config": {
+      "account_plugins": [],
+      "account_skills": [],
+      "allowed_tools": [
+       "Bash",
+       "Read",
+       "Write"
+      ],
+      "auto_mode_allow": [],
+      "auto_mode_environment": [],
+      "auto_mode_soft_deny": [],
+      "builtin_tools": [],
+      "disallowed_tools": [],
+      "mcp_servers": [],
+      "model": "claude-opus-5-5",
+      "sources": [
+       {
+        "sparse_checkout_exclude_patterns": [],
+        "sparse_checkout_paths": [],
+        "type": "git_repository",
+        "url": "https://github.com/Mohamedalhaaj/gold-analyst-inbox"
+       }
+      ],
+      "subagents": [],
+      "worktree": false
+     },
+     "environment_id": "env_01REwcJo2NSGXn64reopcvds",
+     "environment_variables": {}
+    },
     "suspension_reason": "",
-    "updated_at": "2026-10-23T08:50:44.410264Z"
+    "updated_at": "2026-10-24T02:43:49.547502Z"
    },
-   "repo": "Mohamedalhaaj/gold-analyst",
+   "repo": "Mohamedalhaaj/gold-analyst-inbox",
    "trigger_id": "trig_01RHb8M3VHaSk34Zsw42tQSf"
   },
   {
@@ -170,31 +258,44 @@
     "40 16 * * 2-6"
    ],
    "effort": null,
-   "enabled": true,
+   "enabled": false,
    "environment": {
     "id": "env_01REwcJo2NSGXn64reopcvds",
     "name": "gold-analyst",
+    "network": {
+     "allow": [
+      "datafeed.dukascopy.com"
+     ],
+     "mode": "custom",
+     "note": "The GitHub proxy is reachable at every network level and serves only the attached inbox. The session steps import only the standard library and analyst/vendor (tests/test_layout.py), so no package install is needed. Disclosed: through the inbox's webhooks GitHub itself can still reach any address for a session (R-AN-75 item 2); no network setting closes that. Since §16.18 A7 the session guard (.claude/hooks/guard.py, R-AN-85) refuses every call that could create one, and the run-log scan (R-AN-86) and the security log (R-AN-60) detect what it could miss.",
+     "package_managers": "off"
+    },
     "secrets": "none",
-    "setup": "none"
+    "setup": "none",
+    "variables": "none"
    },
    "model": "claude-opus-5-5",
    "name": "analyst-lesson",
    "network": {
     "allow": [
-     "the git proxy (default)",
      "datafeed.dukascopy.com"
     ],
-    "mode": "limited",
-    "package_managers": "on at export (to be turned off once the canary shows no install is needed)"
+    "mode": "custom",
+    "note": "The GitHub proxy is reachable at every network level and serves only the attached inbox. The session steps import only the standard library and analyst/vendor (tests/test_layout.py), so no package install is needed. Disclosed: through the inbox's webhooks GitHub itself can still reach any address for a session (R-AN-75 item 2); no network setting closes that. Since §16.18 A7 the session guard (.claude/hooks/guard.py, R-AN-85) refuses every call that could create one, and the run-log scan (R-AN-86) and the security log (R-AN-60) detect what it could miss.",
+    "package_managers": "off"
    },
+   "project": null,
    "prompt_sha256": "c6a6117a55233088c6c155c6249a3f1da32d555c8d9bedd1bf0ba155502c4a3f",
    "raw": {
     "created_at": "2026-10-23T08:50:29.929201Z",
+    "created_kind": "ROUTINE_CREATED_KIND_UNSPECIFIED",
+    "created_surface": "ROUTINE_CREATED_SURFACE_UNSPECIFIED",
     "created_via": "http_api",
     "cron_expression": "40 16 * * 2-6",
-    "enabled": true,
+    "enabled": false,
     "enabled_plugins": [],
     "ended_reason": "",
+    "extra_marketplaces": [],
     "id": "trig_0118q3k77T6VWPoHa1g4k3PG",
     "job_config": {
      "ccr": {
@@ -223,7 +324,7 @@
        "sources": [
         {
          "git_repository": {
-          "url": "https://github.com/Mohamedalhaaj/gold-analyst"
+          "url": "https://github.com/Mohamedalhaaj/gold-analyst-inbox"
          }
         }
        ]
@@ -232,11 +333,42 @@
     },
     "mcp_connections": [],
     "name": "analyst-lesson",
+    "next_run_at": "2026-10-23T16:40:00Z",
     "persist_session": false,
+    "session_request": {
+     "config": {
+      "account_plugins": [],
+      "account_skills": [],
+      "allowed_tools": [
+       "Bash",
+       "Read",
+       "Write"
+      ],
+      "auto_mode_allow": [],
+      "auto_mode_environment": [],
+      "auto_mode_soft_deny": [],
+      "builtin_tools": [],
+      "disallowed_tools": [],
+      "mcp_servers": [],
+      "model": "claude-opus-5-5",
+      "sources": [
+       {
+        "sparse_checkout_exclude_patterns": [],
+        "sparse_checkout_paths": [],
+        "type": "git_repository",
+        "url": "https://github.com/Mohamedalhaaj/gold-analyst-inbox"
+       }
+      ],
+      "subagents": [],
+      "worktree": false
+     },
+     "environment_id": "env_01REwcJo2NSGXn64reopcvds",
+     "environment_variables": {}
+    },
     "suspension_reason": "",
-    "updated_at": "2026-10-23T08:50:44.880513Z"
+    "updated_at": "2026-10-24T02:43:52.542761Z"
    },
-   "repo": "Mohamedalhaaj/gold-analyst",
+   "repo": "Mohamedalhaaj/gold-analyst-inbox",
    "trigger_id": "trig_0118q3k77T6VWPoHa1g4k3PG"
   },
   {
@@ -249,31 +381,44 @@
     "0 18,22 * * 6"
    ],
    "effort": null,
-   "enabled": true,
+   "enabled": false,
    "environment": {
     "id": "env_01REwcJo2NSGXn64reopcvds",
     "name": "gold-analyst",
+    "network": {
+     "allow": [
+      "datafeed.dukascopy.com"
+     ],
+     "mode": "custom",
+     "note": "The GitHub proxy is reachable at every network level and serves only the attached inbox. The session steps import only the standard library and analyst/vendor (tests/test_layout.py), so no package install is needed. Disclosed: through the inbox's webhooks GitHub itself can still reach any address for a session (R-AN-75 item 2); no network setting closes that. Since §16.18 A7 the session guard (.claude/hooks/guard.py, R-AN-85) refuses every call that could create one, and the run-log scan (R-AN-86) and the security log (R-AN-60) detect what it could miss.",
+     "package_managers": "off"
+    },
     "secrets": "none",
-    "setup": "none"
+    "setup": "none",
+    "variables": "none"
    },
    "model": "claude-opus-5-5",
    "name": "analyst-revision",
    "network": {
     "allow": [
-     "the git proxy (default)",
      "datafeed.dukascopy.com"
     ],
-    "mode": "limited",
-    "package_managers": "on at export (to be turned off once the canary shows no install is needed)"
+    "mode": "custom",
+    "note": "The GitHub proxy is reachable at every network level and serves only the attached inbox. The session steps import only the standard library and analyst/vendor (tests/test_layout.py), so no package install is needed. Disclosed: through the inbox's webhooks GitHub itself can still reach any address for a session (R-AN-75 item 2); no network setting closes that. Since §16.18 A7 the session guard (.claude/hooks/guard.py, R-AN-85) refuses every call that could create one, and the run-log scan (R-AN-86) and the security log (R-AN-60) detect what it could miss.",
+    "package_managers": "off"
    },
+   "project": null,
    "prompt_sha256": "86805d7facb89d10c5f65693fc9c3cd7f61f8af45f6598f2989acd26c3b35103",
    "raw": {
     "created_at": "2026-10-23T08:50:32.161840Z",
+    "created_kind": "ROUTINE_CREATED_KIND_UNSPECIFIED",
+    "created_surface": "ROUTINE_CREATED_SURFACE_UNSPECIFIED",
     "created_via": "http_api",
     "cron_expression": "0 18,22 * * 6",
-    "enabled": true,
+    "enabled": false,
     "enabled_plugins": [],
     "ended_reason": "",
+    "extra_marketplaces": [],
     "id": "trig_013J1yEFxaN82wzpuytRpuTw",
     "job_config": {
      "ccr": {
@@ -302,7 +447,7 @@
        "sources": [
         {
          "git_repository": {
-          "url": "https://github.com/Mohamedalhaaj/gold-analyst"
+          "url": "https://github.com/Mohamedalhaaj/gold-analyst-inbox"
          }
         }
        ]
@@ -311,12 +456,166 @@
     },
     "mcp_connections": [],
     "name": "analyst-revision",
+    "next_run_at": "2026-10-24T18:02:01.879275Z",
     "persist_session": false,
+    "session_request": {
+     "config": {
+      "account_plugins": [],
+      "account_skills": [],
+      "allowed_tools": [
+       "Bash",
+       "Read",
+       "Write"
+      ],
+      "auto_mode_allow": [],
+      "auto_mode_environment": [],
+      "auto_mode_soft_deny": [],
+      "builtin_tools": [],
+      "disallowed_tools": [],
+      "mcp_servers": [],
+      "model": "claude-opus-5-5",
+      "sources": [
+       {
+        "sparse_checkout_exclude_patterns": [],
+        "sparse_checkout_paths": [],
+        "type": "git_repository",
+        "url": "https://github.com/Mohamedalhaaj/gold-analyst-inbox"
+       }
+      ],
+      "subagents": [],
+      "worktree": false
+     },
+     "environment_id": "env_01REwcJo2NSGXn64reopcvds",
+     "environment_variables": {}
+    },
     "suspension_reason": "",
-    "updated_at": "2026-10-23T08:50:45.662367Z"
+    "updated_at": "2026-10-24T02:43:55.082920Z"
    },
-   "repo": "Mohamedalhaaj/gold-analyst",
+   "repo": "Mohamedalhaaj/gold-analyst-inbox",
    "trigger_id": "trig_013J1yEFxaN82wzpuytRpuTw"
+  },
+  {
+   "allowed_tools": [
+    "Bash",
+    "Read",
+    "Write"
+   ],
+   "crons": [
+    "0 3 1 1 *"
+   ],
+   "effort": null,
+   "enabled": false,
+   "environment": {
+    "id": "env_01REwcJo2NSGXn64reopcvds",
+    "name": "gold-analyst",
+    "network": {
+     "allow": [
+      "datafeed.dukascopy.com"
+     ],
+     "mode": "custom",
+     "note": "The GitHub proxy is reachable at every network level and serves only the attached inbox. The session steps import only the standard library and analyst/vendor (tests/test_layout.py), so no package install is needed. Disclosed: through the inbox's webhooks GitHub itself can still reach any address for a session (R-AN-75 item 2); no network setting closes that. Since §16.18 A7 the session guard (.claude/hooks/guard.py, R-AN-85) refuses every call that could create one, and the run-log scan (R-AN-86) and the security log (R-AN-60) detect what it could miss.",
+     "package_managers": "off"
+    },
+    "secrets": "none",
+    "setup": "none",
+    "variables": "none"
+   },
+   "model": "claude-opus-5-5",
+   "name": "analyst-probe",
+   "network": {
+    "allow": [
+     "datafeed.dukascopy.com"
+    ],
+    "mode": "custom",
+    "note": "The GitHub proxy is reachable at every network level and serves only the attached inbox. The session steps import only the standard library and analyst/vendor (tests/test_layout.py), so no package install is needed. Disclosed: through the inbox's webhooks GitHub itself can still reach any address for a session (R-AN-75 item 2); no network setting closes that. Since §16.18 A7 the session guard (.claude/hooks/guard.py, R-AN-85) refuses every call that could create one, and the run-log scan (R-AN-86) and the security log (R-AN-60) detect what it could miss.",
+    "package_managers": "off"
+   },
+   "project": null,
+   "prompt_sha256": "88121b557ab79f96ebcf1b5efbf91fe446ff417b7fe648edc571b767c240a2aa",
+   "raw": {
+    "created_at": "2026-10-24T02:45:34.958506Z",
+    "created_kind": "ROUTINE_CREATED_KIND_UNSPECIFIED",
+    "created_surface": "ROUTINE_CREATED_SURFACE_UNSPECIFIED",
+    "created_via": "http_api",
+    "cron_expression": "0 3 1 1 *",
+    "enabled": false,
+    "enabled_plugins": [],
+    "ended_reason": "",
+    "extra_marketplaces": [],
+    "id": "trig_01EY4TtTTbUVXyGvbiZBKhY5",
+    "job_config": {
+     "ccr": {
+      "environment_id": "env_01REwcJo2NSGXn64reopcvds",
+      "events": [
+       {
+        "data": {
+         "message": {
+          "content": "Follow analyst/PROBE_SESSION_PROMPT.md exactly.",
+          "role": "user"
+         },
+         "parent_tool_use_id": null,
+         "session_id": "",
+         "type": "user",
+         "uuid": "f3cf06e2-75cb-4cd0-bf54-0731f0d1a1aa"
+        }
+       }
+      ],
+      "session_context": {
+       "allowed_tools": [
+        "Bash",
+        "Read",
+        "Write"
+       ],
+       "model": "claude-opus-5-5",
+       "sources": [
+        {
+         "git_repository": {
+          "url": "https://github.com/Mohamedalhaaj/gold-analyst-inbox"
+         }
+        }
+       ]
+      }
+     }
+    },
+    "mcp_connections": [],
+    "name": "analyst-probe",
+    "next_run_at": "2027-01-01T03:06:35.034500Z",
+    "persist_session": false,
+    "session_request": {
+     "config": {
+      "account_plugins": [],
+      "account_skills": [],
+      "allowed_tools": [
+       "Bash",
+       "Read",
+       "Write"
+      ],
+      "auto_mode_allow": [],
+      "auto_mode_environment": [],
+      "auto_mode_soft_deny": [],
+      "builtin_tools": [],
+      "disallowed_tools": [],
+      "mcp_servers": [],
+      "model": "claude-opus-5-5",
+      "sources": [
+       {
+        "sparse_checkout_exclude_patterns": [],
+        "sparse_checkout_paths": [],
+        "type": "git_repository",
+        "url": "https://github.com/Mohamedalhaaj/gold-analyst-inbox"
+       }
+      ],
+      "subagents": [],
+      "worktree": false
+     },
+     "environment_id": "env_01REwcJo2NSGXn64reopcvds",
+     "environment_variables": {}
+    },
+    "suspension_reason": "",
+    "updated_at": "2026-10-24T02:45:38.003008Z"
+   },
+   "repo": "Mohamedalhaaj/gold-analyst-inbox",
+   "trigger_id": "trig_01EY4TtTTbUVXyGvbiZBKhY5"
   }
  ],
  "schema": "analyst-routine-config/1"
