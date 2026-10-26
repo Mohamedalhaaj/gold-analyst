@@ -115,8 +115,10 @@ def test_the_sources_note_is_exact():
     assert context.SOURCES == {
         "history": "dukascopy_store", "today": "twelvedata_1h",
         "note": "bars_h1 entries with src td, p_ref when p_ref_src is td, and fx come from Twelve Data hourly bars in "
-                "UTC; bars_h1 entries with src store are Dukascopy mid; bars_d1 are built from bars_h1; Twelve Data "
-                "and Dukascopy levels can differ slightly; settlement uses Dukascopy."}
+                "UTC; bars_h1 entries with src store are Dukascopy mid; bars_d1 cover the 25 weekdays before the "
+                "model day and are built from hourly bars made as bars_h1's are, but bars_h1 lists only the last 10 "
+                "of those days, so the older bars_d1 days come from Dukascopy store hours not shown in bars_h1; "
+                "Twelve Data and Dukascopy levels can differ slightly; settlement uses Dukascopy."}
 
 
 def test_forming_hour_boundary():
@@ -317,7 +319,8 @@ def test_events_block_and_horizon():
     from ga import tables
     v = world(w.day, dt.date(2026, 11, 9))
     e = tables.load_events(v)
-    assert e.context_block(dt.date(2028, 1, 4))["today"] == {"nfp": None, "cpi": None, "fomc": None}
+    assert e.context_block(dt.date(2028, 1, 4))["today"] == {k: None for k in tables.KINDS}
+    assert list(ev["today"]) == list(tables.KINDS) and len(tables.KINDS) == 12          # §16.18 A12-D18
     # NFP 2026-11-06 12:30 UTC -> model date 2026-11-06
     assert e.context_block(dt.date(2026, 11, 6))["today"]["nfp"] in (0, 1)
 

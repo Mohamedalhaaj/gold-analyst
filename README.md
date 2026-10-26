@@ -28,6 +28,16 @@ advice and it never trades. Nobody has shown that the analyst has an edge; the e
   session trader under test, playbook v0 holds the validated facts, the measured cost and a framework labelled
   "hypotheses, not proven", and a `stay_out` plan (`analyst-plan/2`) names one `stay_out_reason`: `event_risk`,
   `no_setup`, `conflicting_signals` or `mid_range`. The A12 text awaits the client's approval before it is pushed.
+- Since §16.18 A12-D17..D19 the context's `events` (R-AN-20) has twelve kinds: `nfp`, `cpi`, `fomc` and, from the
+  live macro calendar `analyst/calendars/macro_2026_2027.csv` (the issuers' official dates from 2026-10-29 to
+  2027-12-30, each row with its source page), `ppi`, `jolts`, `gdp`, `pce`, `retail`, `ism_mfg`, `ism_svc`,
+  `claims` and `ecb`. Each flag is 0, 1 or null (null after the kind's last listed event: ISM and JOLTS have no
+  2027 dates yet); `today_times_utc` and `next_times_utc` list `{"kind", "utc"}` once each, sorted by time, then
+  kind. `event_risk` covers all twelve. The macro calendar is data outside the frozen manifest: appending rows an
+  issuer has since published, each with its official source, is a data update logged in `analyst/ops_changes.csv`
+  (no earlier row changes; `tests/test_calendar_macro.py` must pass), not a change of the analyst, and the judge
+  reads the file at each call's repo_head_sha. The 2015-2024 calendar the exam needs is deferred until the exam is
+  prepared; the exam does not run without it.
 - The routines are attached only to the agent inbox `Mohamedalhaaj/gold-analyst-inbox` (public, GitHub Actions
   disabled, no secret). Its `main` is a fast-forward copy of this repository's main, kept level by
   `analyst-inbox-mirror`; sessions clone it and push only to its `claude/analyst-*` branches. No session can write
@@ -82,7 +92,8 @@ advice and it never trades. Nobody has shown that the analyst has an edge; the e
   only the standard library and `analyst/vendor/` (tzdata 2026.3, the lab's `eproc.py`), so the routine environment
   needs no package manager: access level None, no environment variable, no setup script, and the one network secret
   (`analyst/ROUTINE_CONFIG.template.json`, checked in the export by `tests/test_routine_config.py`).
-- `analyst/FROZEN_ANALYST.sha256`: the frozen set (`python -I analyst/jobs/make_frozen.py`).
+- `analyst/FROZEN_ANALYST.sha256`: the frozen set (`python -I analyst/jobs/make_frozen.py`); the live macro calendar
+  is outside it (§16.18 A12-D19).
 - `.claude/`: the session guard, and nothing else (no CLAUDE.md, AGENTS.md or .mcp.json anywhere). A Claude Code session
   whose project directory is this repository, a local one included, runs under the guard and can do nothing but the
   routine's steps: maintain the repository from a session started outside it.

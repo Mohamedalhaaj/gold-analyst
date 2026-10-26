@@ -6,6 +6,9 @@ analyst/ga (the context builder, D_ref, settlement, the e-process use, merge and
 (analyst/vendor/**, tzdata included), the tables and calendars, playbook v0, PARAMS.json and the canary lesson fixture;
 and (§16.18 A7) the session guard's two files and the probe session's prompt (R-AN-85, R-AN-74 C20).
 code_sha8 = the first 8 hex of sha256(manifest bytes). Display code (analyst/display) and owner files are outside it.
+§16.18 A12-D19: the live macro calendar (DATA_FILES) is data, refreshed by appending issuer-published rows (a logged
+data update, analyst/ops_changes.csv), so it is outside the manifest; the judge checks it at each call's
+repo_head_sha instead (append-only against the A12 build commit's file).
 """
 import hashlib
 from pathlib import Path
@@ -17,6 +20,7 @@ FILES = ("analyst/ROUTINE_PROMPT.md", "analyst/exam/ROUTINE_PROMPT.md", "analyst
          ".claude/hooks/guard.py")
 TREES = ("analyst/ga/", "analyst/vendor/", "analyst/tables/", "analyst/calendars/")
 SKIP_PARTS = ("__pycache__",)
+DATA_FILES = ("analyst/calendars/macro_2026_2027.csv",)
 
 
 def frozen_paths(root):
@@ -29,8 +33,10 @@ def frozen_paths(root):
             raise FileNotFoundError(f)
     for t in TREES:
         for p in (root / t).rglob("*"):
-            if p.is_file() and not any(s in p.parts for s in SKIP_PARTS) and p.suffix != ".pyc":
-                out.add(p.relative_to(root).as_posix())
+            rel = p.relative_to(root).as_posix()
+            if p.is_file() and not any(s in p.parts for s in SKIP_PARTS) and p.suffix != ".pyc" \
+                    and rel not in DATA_FILES:
+                out.add(rel)
     return sorted(out)
 
 

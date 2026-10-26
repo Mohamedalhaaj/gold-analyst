@@ -123,6 +123,7 @@ def test_manifest_lists_the_frozen_set():
                  ".claude/hooks/guard.py", "analyst/PROBE_SESSION_PROMPT.md"):
         assert need in paths
     assert not any(p.startswith("analyst/display/") for p in paths)
+    assert "analyst/calendars/macro_2026_2027.csv" not in paths          # data, refreshed by appending (A12-D19)
 
 
 def test_tzdata_files_match_the_wheel_record():

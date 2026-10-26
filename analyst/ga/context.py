@@ -35,8 +35,10 @@ from . import clock, dref, hours, levels, memory, rec, store, tables, td
 SCHEMA = "analyst-context/3"
 SOURCES = {"history": "dukascopy_store", "today": "twelvedata_1h",
            "note": "bars_h1 entries with src td, p_ref when p_ref_src is td, and fx come from Twelve Data hourly bars "
-                   "in UTC; bars_h1 entries with src store are Dukascopy mid; bars_d1 are built from bars_h1; Twelve "
-                   "Data and Dukascopy levels can differ slightly; settlement uses Dukascopy."}
+                   "in UTC; bars_h1 entries with src store are Dukascopy mid; bars_d1 cover the 25 weekdays before "
+                   "the model day and are built from hourly bars made as bars_h1's are, but bars_h1 lists only the "
+                   "last 10 of those days, so the older bars_d1 days come from Dukascopy store hours not shown in "
+                   "bars_h1; Twelve Data and Dukascopy levels can differ slightly; settlement uses Dukascopy."}
 MAX_LISTED_HOURS = 60
 HIST_WEEKDAYS = 10
 LV_WEEKDAYS = 25

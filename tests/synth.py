@@ -119,7 +119,7 @@ def repo_files(extra=None):
     """The frozen tables, calendars, prompts and configs from the working tree, as a dict."""
     files = {}
     for p in ["analyst/tables/holidays.csv", "analyst/calendars/bls_2026_2027.csv",
-              "analyst/calendars/fomc_2026_2027.csv", "analyst/PARAMS.json", "analyst/PINS.json",
+              "analyst/calendars/fomc_2026_2027.csv", "analyst/calendars/macro_2026_2027.csv", "analyst/PARAMS.json", "analyst/PINS.json",
               "analyst/playbooks/v0.md", "analyst/ROUTINE_PROMPT.md", "analyst/prompts/system.md",
               "analyst/prompts/lesson.md", "analyst/prompts/revision.md", "analyst/schema/plan.schema.json"]:
         files[p] = (ROOT / p).read_bytes()
