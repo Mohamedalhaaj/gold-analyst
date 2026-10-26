@@ -1,7 +1,8 @@
 """Twelve Data requests of the session context (register R-AN-87, §16.18 A9). FROZEN.
 
 The session's only market-data requests, made inside `run_window.py context`: XAUUSD (when the XAU hour list is not
-empty), the five pairs of the dollar proxy, then `fresh`, one at a time.
+empty), the five pairs of the dollar proxy, AUDJPY (the risk proxy, symbol AUD/JPY, §16.18 A12: the pairs' URL form,
+transport, classification and provenance), then `fresh`, one at a time: at most 8 requests a window.
 
 - URLs: `https://api.twelvedata.com/time_series?symbol=<SYM>&interval=1h&start_date=<A>&end_date=<B>&timezone=UTC
   &order=asc&outputsize=5000&dp=5` (A, B as `YYYY-MM-DDTHH:MM:SS` UTC, the symbol's `/` as it is) and FRESH_URL.
@@ -40,7 +41,7 @@ BASE_URL = "https://api.twelvedata.com/time_series"
 FRESH_URL = BASE_URL + "?symbol=XAU/USD&interval=1min&outputsize=1&timezone=UTC&dp=5"
 UA = "Mozilla/5.0 (gold-analyst context)"
 SYMBOLS = {"XAUUSD": "XAU/USD", "EURUSD": "EUR/USD", "USDJPY": "USD/JPY", "GBPUSD": "GBP/USD", "USDCAD": "USD/CAD",
-           "USDCHF": "USD/CHF"}
+           "USDCHF": "USD/CHF", "AUDJPY": "AUD/JPY"}
 PACE_S = 8.0
 TIMEOUT_S = 10
 TRIES = 2
@@ -184,7 +185,8 @@ class Fetcher:
         return self.t_start is not None and self.clock() - self.t_start >= self.budget_s
 
     def fetch(self, req, u, interval):
-        """(provenance, values) of request `req` (XAUUSD, a pair or `fresh`) at URL `u`; values [] unless ok."""
+        """(provenance, values) of request `req` (XAUUSD, a pair, AUDJPY or `fresh`) at URL `u`; values [] unless
+        ok."""
         prov = {"src": "td", "req": req, "url": u, "http": 0, "td_code": 0, "status": "error", "reason": "budget",
                 "bytes": 0, "sha256": "", "values_n": 0, "bars": [], "fetched_utc": None, "tries": 0}
         http, body = 0, None

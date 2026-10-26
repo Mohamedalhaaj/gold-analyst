@@ -162,6 +162,27 @@ def test_invalid_plan_three_times_and_decline(tmp_path):
     assert h.main_json("analyst/canary/terminal/2026-11-10_W2.json")["status"] == "no_call:refusal"
 
 
+def test_stay_out_reason_is_checked_at_the_lock(tmp_path):
+    """§16.18 A12 (R-AN-26, R-AN-28): an `analyst-context/3` call's stay_out needs a valid stay_out_reason; a failure
+    prints its codes and counts toward the cap of 3."""
+    h = Harness(tmp_path)
+    assert h.run("start") == 0
+    h.push_and_merge()
+    h.at(2026, 11, 10, 7, 21)
+    h.run("context")
+    so = {"action": "stay_out", "confidence": "low", "reason_ar": "لا إعداد", "key_risks_ar": ""}
+    assert h.run("lock", str(h.write_plan(so))) == 2 and h.log[-1] == "invalid missing_keys failures=1"
+    assert h.run("lock", str(h.write_plan(dict(so, stay_out_reason="calm")))) == 2
+    assert h.log[-1] == "invalid stay_out_reason failures=2"
+    assert h.run("lock", str(h.write_plan(dict(so, stay_out_reason="mid_range")))) == 0
+    assert h.log[-1] == "locked 2026-11-10_W1 status=stay_out"
+    h.push_and_merge()
+    call = h.main_json(CANARY_CALL)
+    assert call["context"]["schema"] == "analyst-context/3" and call["plan"]["stay_out_reason"] == "mid_range"
+    assert call["status"] == "stay_out" and call["side"] == 0 and call["lock_validation_failures"] == 2
+    assert h.main_json("analyst/canary/terminal/2026-11-10_W1.json")["status"] == "stay_out"
+
+
 def test_context_no_call_is_locked_at_once(tmp_path):
     h = Harness(tmp_path, store_last=dt.date(2026, 11, 4))                        # 75 listed hours -> store_stale
     h.run("start")

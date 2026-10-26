@@ -6,6 +6,11 @@ plan.json is a JSON object with exactly: action ∈ {buy, sell, stay_out}; for b
 code points); key_risks_ar (0-300 code points). Any other key, a missing key, or a C0/C1 control character other than
 LF in a string is invalid. Text is stored exactly as received.
 
+§16.18 A12 (`analyst-plan/2`): for a call whose context is `analyst-context/3`, a stay_out plan also has
+stay_out_reason, exactly one of "event_risk", "no_setup", "conflicting_signals", "mid_range", and a trade has none.
+Missing: `missing_keys`; on a trade: `extra_keys`; another value or type: `stay_out_reason`. The lock does not check
+event_risk against `events` (the canary report counts that). An `analyst-context/2` call keeps the old key set.
+
 S and T: exact integer arithmetic, half up: m = round(10·mult); S_dimes = (D_ref_cents·m_S + 50) // 100; S = S_dimes/10.
 """
 import json
@@ -19,6 +24,14 @@ REASON_MAX = 400
 RISKS_MAX = 300
 TRADE_KEYS = {"action", "stop_mult", "target_mult", "confidence", "reason_ar", "key_risks_ar"}
 STAY_KEYS = {"action", "confidence", "reason_ar", "key_risks_ar"}
+STAY_OUT_REASONS = ("event_risk", "no_setup", "conflicting_signals", "mid_range")
+STAY_KEYS_A12 = STAY_KEYS | {"stay_out_reason"}
+REASON_CONTEXT_SCHEMAS = ("analyst-context/3",)
+
+
+def stay_reason_applies(context_schema):
+    """R-AN-26 (§16.18 A12): the stay_out_reason rule applies to a call whose context has this schema."""
+    return context_schema in REASON_CONTEXT_SCHEMAS
 
 
 def _bad_control(s):
@@ -46,8 +59,9 @@ def _unique_pairs(pairs):
     return dict(pairs)
 
 
-def validate(raw_bytes):
-    """(plan dict with multiples as floats, None) or (None, [error codes])."""
+def validate(raw_bytes, stay_reason=False):
+    """(plan dict with multiples as floats, None) or (None, [error codes]). `stay_reason`: apply §16.18 A12's
+    stay_out_reason rule (an `analyst-context/3` call, stay_reason_applies)."""
     errs = []
     try:
         text = raw_bytes.decode("utf-8")
@@ -59,7 +73,7 @@ def validate(raw_bytes):
     action = obj.get("action")
     if action not in ACTIONS:
         errs.append("action")
-    want = STAY_KEYS if action == "stay_out" else TRADE_KEYS
+    want = (STAY_KEYS_A12 if stay_reason else STAY_KEYS) if action == "stay_out" else TRADE_KEYS
     extra, missing = set(obj) - want, want - set(obj)
     if extra:
         errs.append("extra_keys")
@@ -70,6 +84,9 @@ def validate(raw_bytes):
             errs.append("stop_mult")
         if "target_mult" in obj and not _num_in(obj["target_mult"], TARGET_MULTS):
             errs.append("target_mult")
+    if stay_reason and action == "stay_out" and "stay_out_reason" in obj and not (
+            isinstance(obj["stay_out_reason"], str) and obj["stay_out_reason"] in STAY_OUT_REASONS):
+        errs.append("stay_out_reason")
     if "confidence" in obj and obj["confidence"] not in CONFIDENCE:
         errs.append("confidence")
     r = obj.get("reason_ar")

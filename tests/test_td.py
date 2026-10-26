@@ -24,8 +24,12 @@ def test_urls_are_exact_and_carry_no_key():
     assert td.series_url("USDJPY", H, H).startswith("https://api.twelvedata.com/time_series?symbol=USD/JPY&interval=1h")
     assert td.FRESH_URL == ("https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=1min&outputsize=1"
                             "&timezone=UTC&dp=5")
-    assert [td.SYMBOLS[p] for p in ("XAUUSD", "EURUSD", "USDJPY", "GBPUSD", "USDCAD", "USDCHF")] == [
-        "XAU/USD", "EUR/USD", "USD/JPY", "GBP/USD", "USD/CAD", "USD/CHF"]
+    assert [td.SYMBOLS[p] for p in ("XAUUSD", "EURUSD", "USDJPY", "GBPUSD", "USDCAD", "USDCHF", "AUDJPY")] == [
+        "XAU/USD", "EUR/USD", "USD/JPY", "GBP/USD", "USD/CAD", "USD/CHF", "AUD/JPY"]       # AUDJPY: §16.18 A12
+    assert td.series_url("AUDJPY", H, H + dt.timedelta(hours=1)) == (
+        "https://api.twelvedata.com/time_series?symbol=AUD/JPY&interval=1h&start_date=" + H.strftime("%Y-%m-%dT%H:%M:%S")
+        + "&end_date=" + (H + dt.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S")
+        + "&timezone=UTC&order=asc&outputsize=5000&dp=5")
     for x in (u, td.FRESH_URL):
         assert "apikey" not in x.lower() and "key=" not in x.lower()
     assert (td.PACE_S, td.TIMEOUT_S, td.TRIES, td.BUDGET_S, td.MAX_BYTES) == (8.0, 10, 2, 120.0, 262_144)

@@ -484,7 +484,7 @@ def test_canary_context_runs_the_probes_after_writing_the_context(tmp_path):
     assert (cp["schema"], cp["kind"], cp["tag"], cp["verdict"]) == ("analyst-probe/1", "canary", W1, "pass")
     assert cp["outcomes"]["net.twelvedata"] == 200                # the context's own first request (§16.18 A9)
     assert cp["outcomes"]["net.dukascopy"] == 0                   # refused: the environment allows no domain
-    assert len(h.feed.requests) == 7                              # the canary probe spent no request of its own
+    assert len(h.feed.requests) == 8                              # the canary probe spent no request of its own
     assert cp["probe_utc"] == "2026-11-10T07:21:00Z"
     assert cp["cc_version"] == "test-cc"                  # both kinds of the record (third review of A7)
     assert sorted(r for r in heads(h, "refs/heads/claude/probe-*")) == sorted(

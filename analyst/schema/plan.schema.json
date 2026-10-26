@@ -1,7 +1,7 @@
 {
  "$schema": "https://json-schema.org/draft/2020-12/schema",
- "$id": "analyst-plan/1",
- "title": "plan.json (ANALYST_V1_PREREG.md §3 Schema; register R-AN-26). Lengths of reason_ar (1-400) and key_risks_ar (0-300) are enforced in code, not here.",
+ "$id": "analyst-plan/2",
+ "title": "plan.json (ANALYST_V1_PREREG.md §3 Schema and Change A12; register R-AN-26, §16.18 A12). Lengths of reason_ar (1-400) and key_risks_ar (0-300) are enforced in code, not here.",
  "type": "object",
  "oneOf": [
   {
@@ -19,11 +19,12 @@
   {
    "properties": {
     "action": {"const": "stay_out"},
+    "stay_out_reason": {"enum": ["event_risk", "no_setup", "conflicting_signals", "mid_range"]},
     "confidence": {"enum": ["low", "medium", "high"]},
     "reason_ar": {"type": "string"},
     "key_risks_ar": {"type": "string"}
    },
-   "required": ["action", "confidence", "reason_ar", "key_risks_ar"],
+   "required": ["action", "stay_out_reason", "confidence", "reason_ar", "key_risks_ar"],
    "additionalProperties": false
   }
  ]
