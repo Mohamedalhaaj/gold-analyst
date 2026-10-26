@@ -63,7 +63,8 @@ advice and it never trades. Nobody has shown that the analyst has an edge; the e
   VIOLATION, 1 for a file that breaks the schema (Write and Edit text must be copied as hashes, never as text). A
   field the run log does not show is left out of the call's input; a call whose input lacks a field the rules need
   (Bash `command`, a file tool's path, Write's `content`) is `scan_unclassifiable`, a WARNING. A chain of harmless
-  commands (`cat x; ls`, `cat x | head`) is a harmless near-miss, as a `cd` prefix is. A runs export also gives
+  commands (`cat x; ls`, `cat x | head`) is a harmless near-miss, as a `cd` prefix is; since §16.18 A11 so are the
+  read-only `git status` and `git log` forms of R-AN-86 (a)(iv) and a `PushNotification` (d). A runs export also gives
   `VIOLATION routine_project <name>` for a routine whose `project` is missing or not null, and a C20 record's verdict
   must agree with its `cc_version` (pass needs 2.1.295 or later).
 - `analyst/MODE.json` selects `canary` (records under `analyst/canary/`, never settled or shown), `live` or `off`.

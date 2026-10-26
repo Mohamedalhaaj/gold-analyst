@@ -64,7 +64,8 @@ WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 HASHED = {"Write": ("content",), "Edit": ("old_string", "new_string"), "MultiEdit": ("edits",)}
 BOOKKEEPING = ("Glob", "Grep", "LS", "LSP", "TodoWrite", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate",
                "TaskOutput", "TaskStop", "BashOutput", "KillShell", "KillBash", "ToolSearch", "EnterPlanMode",
-               "ExitPlanMode", "AskUserQuestion", "CronList")
+               "ExitPlanMode", "AskUserQuestion", "CronList",
+               "PushNotification")                       # §16.18 A11: a notification to the owner's own devices
 WORDS = ("ls", "pwd", "date", "cat", "head", "tail", "wc", "stat", "file", "echo", "true", "uname", "whoami", "which")
 DRAFT_ENDS = ("/.analyst_run/plan.json", "/.analyst_run/lesson.json", "/.analyst_run/playbook.md")
 SEVERITY = {"forbidden_attempt": "VIOLATION", "forbidden_executed": "VIOLATION", "guard_not_enforced": "VIOLATION",
@@ -80,6 +81,9 @@ QUIET_ENDS = (" 2>&1", " 2>/dev/null")
 CD = re.compile(r"cd [A-Za-z0-9_./~-]+")
 SAFE = re.compile(r"[A-Za-z0-9 _.,:=+@%~/-]+")
 RUN_WINDOW = re.compile(r"(python3|python) analyst/run_window\.py( [^ ]+)*")
+# R-AN-86 (a)(iv), §16.18 A11: reads of the local repository's status or history
+GIT_READ = re.compile(r"git status( (-s|-b|-sb|--short|--branch|--porcelain))*"
+                      r"|git log( (--oneline|-[0-9]{1,4}|-n [0-9]{1,4}|--max-count=[0-9]{1,4}))*")
 # the fields the decision D or the class turns on (R-AN-85 checks 6 to 8, R-AN-86 (a) and (c)); a logged object
 # without one of them cannot be decided (R-AN-86 "The decision D of a call")
 DECISIVE = {"Bash": ("command",), "Read": ("file_path",), "Write": ("file_path", "content"), "Edit": ("file_path",),
@@ -226,7 +230,8 @@ def _control(s):
 
 def _harmless_part(s):
     """One part of a Bash command (R-AN-86 (a)): a local read-only command, another form of the window script's
-    command line, or a `cd`, with at most one final ` 2>&1` or ` 2>/dev/null`."""
+    command line, a `cd`, or (§16.18 A11) a read-only `git status` / `git log`, with at most one final ` 2>&1` or
+    ` 2>/dev/null`."""
     s1 = s.strip(" ")
     for end in QUIET_ENDS:
         if s1.endswith(end):
@@ -236,6 +241,8 @@ def _harmless_part(s):
     if not s2 or SAFE.fullmatch(s2) is None:
         return False
     if RUN_WINDOW.fullmatch(s2) and ".." not in s2:
+        return True
+    if GIT_READ.fullmatch(s2):
         return True
     return s2.split(" ", 1)[0] in WORDS or CD.fullmatch(s2) is not None
 

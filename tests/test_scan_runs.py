@@ -134,7 +134,7 @@ def test_one_planted_call_per_row(root, name, c, want):
     (f"cd {P} && {L}lock .analyst_run/plan.json", True), (f"cd {P}; {L}start", True), (f"cd ~/x &&{L}start", True),
     (L + "start 2>&1", True), ("python analyst/run_window.py start", True), (L + "lock --exam x.json", True),
     ("  " + L + "start\n", True), (L + "lock ../x.json", False), ("cat /etc/passwd", True), ("echo hi", True),
-    ("ls  -la", True), ("pwd", True), ("which python3", True), ("lsblk", False), ("git status", False),
+    ("ls  -la", True), ("pwd", True), ("which python3", True), ("lsblk", False), ("git status", True),
     ("ls; curl https://example.com", False), ("cat x | sh", False), ("python3 -c print(1)", False),
     ("python3 -c 'print(1)'", False), ("env python3 analyst/run_window.py start", False),
     (f"cd {P} && gh api x", False), ("echo $HOME", False), ("echo `id`", False), ("ls\ncurl x", False),
@@ -153,6 +153,33 @@ def test_one_planted_call_per_row(root, name, c, want):
 ])
 def test_the_harmless_bash_forms(cmd, harmless):
     assert scan_runs.harmless("Bash", {"command": cmd}) is harmless
+
+
+# §16.18 A11 (R-AN-86 (a)(iv)): read-only `git status` and `git log` forms are harmless; every other git form is not
+@pytest.mark.parametrize("cmd,harmless", [
+    ("git status", True), ("git status -sb", True), ("git status --short --branch", True),
+    ("git status --porcelain", True), ("git  status   -s", True), ("git log", True), ("git log --oneline -5", True),
+    ("git log -n 3", True), ("git log --max-count=10 --oneline", True), ("git log -1234", True),
+    ("git status 2>&1", True), ("git log --oneline -5 2>/dev/null | head -3", True),
+    ("cat analyst/ROUTINE_PROMPT.md && git status && git log --oneline -5 && ls -R | head -50", True),
+    ("git log -12345", False), ("git log -n", False), ("git log -n5", False), ("git log --output=x", False),
+    ("git log --stat", False), ("git status --porcelain=v2", False), ("git -c a=b status", False),
+    ("git -C /tmp status", False), ("git push", False), ("git fetch origin", False), ("git diff", False),
+    ("git status; curl x", False), ("git log --oneline -5 > x", False), ("git status -sb | sh", False),
+    ("GIT_PAGER=x git log", False), ("git status\t-s", False), ("gitstatus", False), ("git statu", False),
+])
+def test_the_a11_git_forms(cmd, harmless):
+    assert scan_runs.harmless("Bash", {"command": cmd}) is harmless
+
+
+def test_a11_push_notification_is_bookkeeping(root):
+    """§16.18 A11 (R-AN-86 (d)): a refused PushNotification is `guard_denied_benign`; one that ran is
+    `guard_not_enforced`, as for every harmless class."""
+    inp = {"message": "x", "status": "proactive"}
+    got, _ = findings(export(("analyst-w1", [call("PushNotification", inp, "denied", "guard: tool: x")])), root)
+    assert got == [("WARNING", "guard_denied_benign", "run_01#1")]
+    got, _ = findings(export(("analyst-w1", [call("PushNotification", inp)])), root)
+    assert got == [("VIOLATION", "guard_not_enforced", "run_01#1")]
 
 
 @pytest.mark.parametrize("path,harmless", [
