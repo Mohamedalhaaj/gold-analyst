@@ -244,7 +244,7 @@ class Session:
         if raw is None:
             obj, errs = None, ["missing_plan"]
         else:
-            obj, errs = plan.validate(raw)
+            obj, errs = plan.validate(raw, stay_reason=plan.stay_reason_applies(ctx.get("schema")))
         if errs:
             st["failures"] = int(st.get("failures", 0)) + 1
             self._save_state(st)

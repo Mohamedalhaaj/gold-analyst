@@ -1,4 +1,4 @@
-"""The context builder (prereg R2 and §2; register R-AN-14..R-AN-23, R-AN-87; §16.18 A9). FROZEN.
+"""The context builder (prereg R2 and §2; register R-AN-14..R-AN-23, R-AN-87, R-AN-88; §16.18 A9, A12). FROZEN.
 
 Nothing after the fetch time enters: hour h is admissible iff h + 1 h <= asof_utc − L_min, and the history comes from
 the mirrored store at repo_head_sha. On a data or D_ref failure the context is returned with status
@@ -12,6 +12,14 @@ the c of the newest listed hour's bar, timed at that hour's end; p0 is the o of 
 its h_new bar. Levels are shown as Twelve Data gives them, with no offset, and the fixed `sources` note names both
 sources. Past days still come from the store.
 
+Since §16.18 A12 (`analyst-context/3`): `risk`, right after `fx`, is AUD/JPY from one more 1h request after USDCHF
+and before `fresh` ({pair, p0 = the o of its t0 bar, p1 = the c of its h_new bar, pct = 100·(p1/p0 − 1), t0_hour_utc,
+t1_hour_utc}); it is null when the request was not made, is not `ok`, or lacks either bar, never changes `status` and
+does not enter proxy_pct. The store days now run from start_lv = model 00:00 of the 25th weekday before d, so that
+`bars_d1` covers 25 history weekdays; the hours in [start_lv, start_hist) feed bars_d1 and `levels` only, never
+bars_h1. `levels` (ga/levels.py, R-AN-88), right after `d_ref`, is computed after D_ref from these bars, and is null
+unless `status` is `ok`.
+
 Detail codes: store_stale (more than 60 listed hours), store_mismatch (a raw file differs from its row), td_<reason>
 (the XAUUSD request not `ok` while a listed hour is required: td_key, td_plan, td_credits, td_server, td_invalid,
 td_other, td_budget), hour_absent (XAUUSD `ok` without a bar at a required listed hour), no_price (no P_ref at all),
@@ -22,15 +30,19 @@ Interpretations (logged for the register): `fresh` is null when its fetched_utc 
 import datetime as dt
 import math
 
-from . import clock, dref, hours, memory, rec, store, tables, td
+from . import clock, dref, hours, levels, memory, rec, store, tables, td
 
-SCHEMA = "analyst-context/2"
+SCHEMA = "analyst-context/3"
 SOURCES = {"history": "dukascopy_store", "today": "twelvedata_1h",
            "note": "bars_h1 entries with src td, p_ref when p_ref_src is td, and fx come from Twelve Data hourly bars "
-                   "in UTC; bars_h1 entries with src store are Dukascopy mid; bars_d1 are built from bars_h1; Twelve "
-                   "Data and Dukascopy levels can differ slightly; settlement uses Dukascopy."}
+                   "in UTC; bars_h1 entries with src store are Dukascopy mid; bars_d1 cover the 25 weekdays before "
+                   "the model day and are built from hourly bars made as bars_h1's are, but bars_h1 lists only the "
+                   "last 10 of those days, so the older bars_d1 days come from Dukascopy store hours not shown in "
+                   "bars_h1; Twelve Data and Dukascopy levels can differ slightly; settlement uses Dukascopy."}
 MAX_LISTED_HOURS = 60
 HIST_WEEKDAYS = 10
+LV_WEEKDAYS = 25
+RISK_PAIR = "AUDJPY"
 
 
 def trading_hour(h):
@@ -77,6 +89,7 @@ def build(view, head_sha, mode, w, asof, params, fetcher, with_memory=None):
     rows = store.parse_days(days_b.decode("utf-8"))
     complete = store.complete_utc(rows, asof)
     start_hist = clock.model_to_utc(dt.datetime.combine(clock.weekday_before(d, HIST_WEEKDAYS), dt.time(0)))
+    start_lv = clock.model_to_utc(dt.datetime.combine(clock.weekday_before(d, LV_WEEKDAYS), dt.time(0)))
     h_new = clock.floor_hour(asof - dt.timedelta(minutes=L)) - clock.HOUR
     first_listed = max(complete, start_hist)
     listed = [h for h in clock.hours_between(first_listed, h_new) if trading_hour(h)] if first_listed <= h_new else []
@@ -89,8 +102,8 @@ def build(view, head_sha, mode, w, asof, params, fetcher, with_memory=None):
         "store": {"complete_utc": rec.iso(complete), "start_hist_utc": rec.iso(start_hist),
                   "days_csv_sha256": rec.sha256_bytes(days_b), "slots_sha256": rec.sha256_bytes(slots_b)},
         "files": [], "bars_h1": [], "bars_d1": [], "p_ref": None,
-        "fx": None, "us2y": "unknown", "fresh": None, "sources": dict(SOURCES), "events": events.context_block(d),
-        "d_ref": None, "memory": None,
+        "fx": None, "risk": None, "us2y": "unknown", "fresh": None, "sources": dict(SOURCES),
+        "events": events.context_block(d), "d_ref": None, "levels": None, "memory": None,
         "status": "ok", "detail": None,
     }
 
@@ -100,8 +113,8 @@ def build(view, head_sha, mode, w, asof, params, fetcher, with_memory=None):
 
     if len(listed) > MAX_LISTED_HOURS:
         return fail("no_call:data", "store_stale")
-    store_days = clock.days_range(start_hist.date(), (complete - dt.timedelta(days=1)).date()) \
-        if complete > start_hist else []
+    store_days = clock.days_range(start_lv.date(), (complete - dt.timedelta(days=1)).date()) \
+        if complete > start_lv else []
     try:
         minutes, _used = store.load_days(view, store.final_status(rows, asof), store_days)
     except store.StoreMismatch:
@@ -123,16 +136,22 @@ def build(view, head_sha, mode, w, asof, params, fetcher, with_memory=None):
             if any(h not in td_hours for h in required):
                 return fail("no_call:data", "hour_absent")
 
-    # hourly bars over [start_hist, h_new]: store before complete_utc, Twelve Data after
-    for h in clock.hours_between(start_hist, h_new):
+    # hourly bars over [start_lv, h_new]: store before complete_utc, Twelve Data after; bars_h1 from start_hist on
+    all_bars = []
+    for h in clock.hours_between(start_lv, h_new):
         if not trading_hour(h):
             continue
         b = _store_bar(minutes, h) if h < complete else _td_bar(h, td_hours.get(h))
         if b is not None:
-            ctx["bars_h1"].append(b)
-    hist_days = [clock.weekday_before(d, k) for k in range(HIST_WEEKDAYS, 0, -1)]
+            all_bars.append(b)
+            if h >= start_hist:
+                ctx["bars_h1"].append(b)
+    by_day = {}
+    for b in all_bars:
+        by_day.setdefault(b["t_server"][:10], []).append(b)
+    hist_days = [clock.weekday_before(d, k) for k in range(LV_WEEKDAYS, 0, -1)]
     for hd in hist_days:
-        bs = [b for b in ctx["bars_h1"] if b["t_server"][:10] == hd.isoformat()]
+        bs = by_day.get(hd.isoformat())
         if bs:
             ctx["bars_d1"].append({"day": hd.isoformat(), "o": bs[0]["o"], "h": max(b["h"] for b in bs),
                                    "l": min(b["l"] for b in bs), "c": bs[-1]["c"], "n_hours": len(bs)})
@@ -180,6 +199,16 @@ def build(view, head_sha, mode, w, asof, params, fetcher, with_memory=None):
         proxy = 100.0 * (prod - 1.0)
     ctx["fx"] = {"pairs": pairs, "proxy_pct": proxy, "exponents": list(hours.FX_EXPONENTS)}
 
+    # the risk proxy (R-AN-19, R-AN-87, §16.18 A12): a failure makes `risk` null, never a change of status
+    prov, values = fetcher.fetch(RISK_PAIR, td.series_url(RISK_PAIR, t0h, h_new + clock.HOUR), "1h")
+    ctx["files"].append(prov)
+    got = _by_time(values) if prov["status"] == "ok" else {}
+    prov["bars"] = [td.bar_obj(got[h]) for h in sorted({t0h, h_new}) if h in got]
+    if t0h in got and h_new in got:
+        p0, p1 = got[t0h][1], got[h_new][4]
+        ctx["risk"] = {"pair": RISK_PAIR, "p0": p0, "p1": p1, "pct": 100.0 * (p1 / p0 - 1.0),
+                       "t0_hour_utc": rec.iso(t0h), "t1_hour_utc": rec.iso(h_new)}
+
     # fresh (R-AN-87): measured only, never a change of status; its time only, no price (decision A9-D15)
     prov, values = fetcher.fetch("fresh", td.FRESH_URL, "1min")
     ctx["files"].append(prov)
@@ -199,6 +228,8 @@ def build(view, head_sha, mode, w, asof, params, fetcher, with_memory=None):
         ctx["memory"] = memory.build(view, d)
     if detail:
         return fail("no_call:d_ref", detail)
+    # levels (R-AN-88): from the context's own bars, after D_ref, only when the status is ok
+    ctx["levels"] = levels.compute(d, all_bars, ctx["bars_d1"], p_ref, block["D_ref"])
     return ctx
 
 

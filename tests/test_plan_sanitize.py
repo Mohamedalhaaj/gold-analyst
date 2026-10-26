@@ -104,3 +104,56 @@ def test_sanitizer_allowlist():
     assert plan.sanitize(None) == ""
     for ch in "‎‏‪‫‬‭‮⁦⁧⁨⁩":
         assert plan.sanitize(ch) == ""
+
+
+# ---------------------------------------------------------------- §16.18 A12: stay_out_reason (R-AN-26, R-AN-28)
+SO = {"action": "stay_out", "stay_out_reason": "no_setup", "confidence": "low", "reason_ar": "لا إعداد",
+      "key_risks_ar": ""}
+
+
+def v3(obj):
+    return plan.validate(json.dumps(obj, ensure_ascii=False).encode(), stay_reason=True)
+
+
+def test_stay_out_reason_values():
+    assert plan.STAY_OUT_REASONS == ("event_risk", "no_setup", "conflicting_signals", "mid_range")
+    for r in plan.STAY_OUT_REASONS:
+        p, e = v3({**SO, "stay_out_reason": r})
+        assert e is None and p["stay_out_reason"] == r
+    assert v3(GOOD)[1] is None                                        # a trade carries none
+
+
+@pytest.mark.parametrize("bad,codes", [
+    ({k: x for k, x in SO.items() if k != "stay_out_reason"}, ["missing_keys"]),
+    ({**GOOD, "stay_out_reason": "no_setup"}, ["extra_keys"]),
+    ({**SO, "stay_out_reason": "boredom"}, ["stay_out_reason"]),
+    ({**SO, "stay_out_reason": "No_Setup"}, ["stay_out_reason"]),
+    ({**SO, "stay_out_reason": ["no_setup"]}, ["stay_out_reason"]),
+    ({**SO, "stay_out_reason": None}, ["stay_out_reason"]),
+    ({**SO, "stay_out_reason": 1}, ["stay_out_reason"]),
+    ({**SO, "stop_mult": 1.0}, ["extra_keys"]),
+    ({**SO, "stay_out_reason": "x", "confidence": "max"}, ["confidence", "stay_out_reason"]),
+])
+def test_stay_out_reason_failures(bad, codes):
+    p, e = v3(bad)
+    assert p is None and e == codes
+
+
+def test_a_context_2_call_keeps_the_old_key_set():
+    old = {k: x for k, x in SO.items() if k != "stay_out_reason"}
+    assert v(old)[1] is None and v(SO)[1] == ["extra_keys"]
+    assert plan.validate(json.dumps(SO).encode())[1] == ["extra_keys"]
+    assert plan.stay_reason_applies("analyst-context/3") and not plan.stay_reason_applies("analyst-context/2")
+    assert not plan.stay_reason_applies(None)
+
+
+def test_plan_schema_file_is_analyst_plan_2():
+    from pathlib import Path
+    doc = json.loads((Path(__file__).resolve().parents[1] / "analyst/schema/plan.schema.json").read_text("utf-8"))
+    assert doc["$id"] == "analyst-plan/2"
+    trade, stay = doc["oneOf"]
+    assert "stay_out_reason" not in trade["properties"] and trade["additionalProperties"] is False
+    assert stay["properties"]["stay_out_reason"] == {"enum": list(plan.STAY_OUT_REASONS)}
+    assert set(stay["required"]) == set(plan.STAY_KEYS_A12) == {"action", "stay_out_reason", "confidence",
+                                                                "reason_ar", "key_risks_ar"}
+    assert set(stay["properties"]) == set(stay["required"]) and stay["additionalProperties"] is False

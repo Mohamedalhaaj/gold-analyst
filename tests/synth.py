@@ -119,7 +119,7 @@ def repo_files(extra=None):
     """The frozen tables, calendars, prompts and configs from the working tree, as a dict."""
     files = {}
     for p in ["analyst/tables/holidays.csv", "analyst/calendars/bls_2026_2027.csv",
-              "analyst/calendars/fomc_2026_2027.csv", "analyst/PARAMS.json", "analyst/PINS.json",
+              "analyst/calendars/fomc_2026_2027.csv", "analyst/calendars/macro_2026_2027.csv", "analyst/PARAMS.json", "analyst/PINS.json",
               "analyst/playbooks/v0.md", "analyst/ROUTINE_PROMPT.md", "analyst/prompts/system.md",
               "analyst/prompts/lesson.md", "analyst/prompts/revision.md", "analyst/schema/plan.schema.json"]:
         files[p] = (ROOT / p).read_bytes()
@@ -175,7 +175,7 @@ class FakeFeed:
 
 # ---------------------------------------------------------------- fake Twelve Data (register R-AN-87, §16.18 A9)
 TD_SYMS = {"XAU/USD": "XAUUSD", "EUR/USD": "EURUSD", "USD/JPY": "USDJPY", "GBP/USD": "GBPUSD", "USD/CAD": "USDCAD",
-           "USD/CHF": "USDCHF"}
+           "USD/CHF": "USDCHF", "AUD/JPY": "AUDJPY"}
 
 
 def td_body(values, status="ok", **extra):
@@ -216,8 +216,8 @@ class FakeTD:
             return round(o, 5), round(max(o, c) + 0.5, 5), round(min(o, c) - 0.5, 5), round(c, 5)
         o = 1.1 + 0.001 * math.sin(base / 5000.0)
         c = 1.1 + 0.001 * math.sin((base + 3599) / 5000.0)
-        if sym == "USDJPY":
-            o, c = o * 100, c * 100
+        if sym in ("USDJPY", "AUDJPY"):
+            o, c = o * (100 if sym == "USDJPY" else 90), c * (100 if sym == "USDJPY" else 90)
         return round(o, 5), round(max(o, c) + 0.0001, 5), round(min(o, c) - 0.0001, 5), round(c, 5)
 
     def __call__(self, url, timeout):

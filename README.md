@@ -1,25 +1,43 @@
 # gold-analyst
 
 A pre-registered paper test of an LLM "analyst" for XAU/USD (xauusd-quant `research/analyst/ANALYST_V1_PREREG.md`,
-DRAFT v0.6, and `research/system/IMPLEMENTATION_REGISTER.md` §16 with its amendments §16.18 A6 to A9). It is not
+DRAFT v0.6, and `research/system/IMPLEMENTATION_REGISTER.md` §16 with its amendments §16.18 A6 to A12). It is not
 advice and it never trades. Nobody has shown that the analyst has an edge; the expected result is "not promoted".
 
 ## How it runs
 - Two scheduled Claude Code routines (W1 London, W2 New York) run only the frozen scripts named in
   `analyst/ROUTINE_PROMPT.md`: `start` pushes an attempt record, `context` builds the context, the agent writes
   `plan.json`, and `lock` validates it and pushes the call file.
-- The context (`analyst-context/2`, register R-AN-87, §16.18 A9): past days come from the mirrored system store
-  (Dukascopy M1); the model day's hours, P_ref and the five pairs of the dollar proxy come from Twelve Data
-  `time_series` 1h bars in UTC (`analyst/ga/td.py`), plus one 1-minute `fresh` bar that measures how far Twelve Data
-  lags. At most 7 requests a window, 8 s apart from start to start (the plan allows 8 a minute and 800 a day), 10 s
-  a try, 2 tries only after no response or a 5xx, 120 s in all. The requests carry no key: the routines' environment
-  holds one network secret for `api.twelvedata.com`, which Anthropic's agent proxy adds as `Authorization: apikey
-  <key>` outside the session, so the code never sees the key. The context keeps, per request, the URL, the HTTP
+- The context (`analyst-context/3`, register R-AN-87, §16.18 A9 and A12): past days come from the mirrored system
+  store (Dukascopy M1); the model day's hours, P_ref, the five pairs of the dollar proxy and the AUD/JPY risk proxy
+  (`risk`, null when its request fails, never a reason to void the window) come from Twelve Data `time_series` 1h
+  bars in UTC (`analyst/ga/td.py`), plus one 1-minute `fresh` bar that measures how far Twelve Data lags. At most 8
+  requests a window (XAUUSD, the five pairs, AUDJPY, `fresh`), 8 s apart from start to start (the plan allows 8 a
+  minute and 800 a day), 10 s a try, 2 tries only after no response or a 5xx, 120 s in all. The requests carry no
+  key: the routines' environment holds one network secret for `api.twelvedata.com`, which Anthropic's agent proxy
+  adds as `Authorization: apikey <key>` outside the session, so the code never sees the key. The context keeps, per request, the URL, the HTTP
   status, Twelve Data's code, the classification, the body's size and sha256, and the parsed bars it uses, never the
   response text. An XAUUSD failure while a listed hour is required is `no_call:data` (`td_key`, `td_credits`, ...),
   with no further request. Levels are shown as Twelve Data gives them, with a fixed `sources` note; settlement, the
   twins, the tracker and the judge's checks stay on Dukascopy, which the GitHub runners fetch. The Dukascopy version
   of the session code is kept at the tag `analyst-dukascopy-v0.6` (79b9247, created by the owner before the merge).
+- Since §16.18 A12 the context also has `levels` (`analyst/ga/levels.py`, R-AN-88), computed from its own bars with
+  no request: the previous day's high, low and close, the week's open and today's Asia range (server 01:00-10:00),
+  each with its distance from P_ref in D_ref units, the 1, 5 and 20-day returns, the Asia width ratio and the 5/20-day
+  range ratio; `bars_d1` covers 25 history weekdays (`bars_h1` still 10). The system prompt frames a discretionary
+  session trader under test, playbook v0 holds the validated facts, the measured cost and a framework labelled
+  "hypotheses, not proven", and a `stay_out` plan (`analyst-plan/2`) names one `stay_out_reason`: `event_risk`,
+  `no_setup`, `conflicting_signals` or `mid_range`. The A12 text awaits the client's approval before it is pushed.
+- Since §16.18 A12-D17..D19 the context's `events` (R-AN-20) has twelve kinds: `nfp`, `cpi`, `fomc` and, from the
+  live macro calendar `analyst/calendars/macro_2026_2027.csv` (the issuers' official dates from 2026-10-29 to
+  2027-12-30, each row with its source page), `ppi`, `jolts`, `gdp`, `pce`, `retail`, `ism_mfg`, `ism_svc`,
+  `claims` and `ecb`. Each flag is 0, 1 or null (null after the kind's last listed event: ISM and JOLTS have no
+  2027 dates yet); `today_times_utc` and `next_times_utc` list `{"kind", "utc"}` once each, sorted by time, then
+  kind. `event_risk` covers all twelve. The macro calendar is data outside the frozen manifest: appending rows an
+  issuer has since published, each with its official source, is a data update logged in `analyst/ops_changes.csv`
+  (no earlier row changes; `tests/test_calendar_macro.py` must pass), not a change of the analyst, and the judge
+  reads the file at each call's repo_head_sha. The 2015-2024 calendar the exam needs is deferred until the exam is
+  prepared; the exam does not run without it.
 - The routines are attached only to the agent inbox `Mohamedalhaaj/gold-analyst-inbox` (public, GitHub Actions
   disabled, no secret). Its `main` is a fast-forward copy of this repository's main, kept level by
   `analyst-inbox-mirror`; sessions clone it and push only to its `claude/analyst-*` branches. No session can write
@@ -74,7 +92,8 @@ advice and it never trades. Nobody has shown that the analyst has an edge; the e
   only the standard library and `analyst/vendor/` (tzdata 2026.3, the lab's `eproc.py`), so the routine environment
   needs no package manager: access level None, no environment variable, no setup script, and the one network secret
   (`analyst/ROUTINE_CONFIG.template.json`, checked in the export by `tests/test_routine_config.py`).
-- `analyst/FROZEN_ANALYST.sha256`: the frozen set (`python -I analyst/jobs/make_frozen.py`).
+- `analyst/FROZEN_ANALYST.sha256`: the frozen set (`python -I analyst/jobs/make_frozen.py`); the live macro calendar
+  is outside it (§16.18 A12-D19).
 - `.claude/`: the session guard, and nothing else (no CLAUDE.md, AGENTS.md or .mcp.json anywhere). A Claude Code session
   whose project directory is this repository, a local one included, runs under the guard and can do nothing but the
   routine's steps: maintain the repository from a session started outside it.
