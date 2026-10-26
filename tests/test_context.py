@@ -68,9 +68,9 @@ def test_ok_context_admission_and_shape():
     assert (eur["t0_hour_utc"], eur["t1_hour_utc"]) == ("2026-11-09T22:00:00Z", "2026-11-10T05:00:00Z")
     assert ctx["fx"]["proxy_pct"] is not None and len(ctx["fx"]["pairs"]) == 5
     assert ctx["us2y"] == "unknown"
-    # fresh: the newest 1-minute bar; lag_s = fetched_utc − (bar_utc + 60 s)
+    # fresh: the newest 1-minute bar's time only, no price (decision A9-D15); lag_s = fetched_utc − (bar_utc + 60 s)
     fr = ctx["files"][6]
-    assert fr["url"] == td.FRESH_URL and fr["bars"][0]["t_utc"] == "2026-11-10T07:18:00Z"
+    assert fr["url"] == td.FRESH_URL and fr["bars"] == [{"t_utc": "2026-11-10T07:18:00Z"}]
     assert ctx["fresh"] == {"bar_utc": "2026-11-10T07:18:00Z", "lag_s": 73}
     assert ctx["sources"] == context.SOURCES and ctx["sources"]["today"] == "twelvedata_1h"
     # bars: every trading hour of [start_hist, h_new]; store before complete_utc, Twelve Data after
@@ -252,6 +252,25 @@ def test_fresh_is_measured_only():
     body = td_body([("2026-11-10 07:20:00", 4000.0, 4000.1, 3999.9, 4000.0)])
     ctx, _ = build(v, w, asof, FakeTD(responses={"fresh": (200, body)}))
     assert ctx["fresh"] == {"bar_utc": "2026-11-10T07:20:00Z", "lag_s": -60}
+
+
+def test_fresh_keeps_no_price():
+    """Review B1, decision A9-D15: the `fresh` bar is newer than every admissible hour, so none of its prices may
+    enter the context the model reads; only its time is kept, and its prices are still checked for `ok`."""
+    w = clock.Window(dt.date(2026, 11, 10), "W1")
+    asof = dt.datetime(2026, 11, 10, 7, 20, tzinfo=UTC)
+    v = world(w.day, dt.date(2026, 11, 9))
+    body = td_body([("2026-11-10 07:18:00", 4123.45671, 4123.98763, 4122.13579, 4123.86421)])
+    ctx, _ = build(v, w, asof, FakeTD(responses={"fresh": (200, body)}))
+    assert ctx["status"] == "ok" and ctx["files"][-1]["status"] == "ok"
+    assert ctx["files"][-1]["bars"] == [{"t_utc": "2026-11-10T07:18:00Z"}]
+    assert ctx["fresh"]["bar_utc"] == "2026-11-10T07:18:00Z"
+    s = json.dumps(ctx)
+    assert not any(x in s for x in ("4123.45671", "4123.98763", "4122.13579", "4123.86421", "4123.4567", "4123.86"))
+    # an invalid price still makes `fresh` not ok (the checks are unchanged)
+    bad = td_body([("2026-11-10 07:18:00", 4123.5, 4123.0, 4122.1, 4123.8)])     # h < c
+    ctx, _ = build(v, w, asof, FakeTD(responses={"fresh": (200, bad)}))
+    assert ctx["files"][-1]["status"] == "error" and ctx["files"][-1]["bars"] == [] and ctx["fresh"] is None
 
 
 def test_the_budget_leaves_later_requests_unmade():

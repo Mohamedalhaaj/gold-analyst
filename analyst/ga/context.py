@@ -6,9 +6,11 @@ the mirrored store at repo_head_sha. On a data or D_ref failure the context is r
 
 Since §16.18 A9 (`analyst-context/2`) the model day's inputs come from Twelve Data (ga/td.py, R-AN-87): one 1h request
 for the listed XAU hours, one for each pair of the dollar proxy (t0 to h_new), then the 1-minute `fresh` request that
-measures freshness only. Listed-hour bars have `src` "td" and n null; P_ref is the c of the newest listed hour's bar,
-timed at that hour's end; p0 is the o of the pair's t0 bar and p1 the c of its h_new bar. Levels are shown as Twelve
-Data gives them, with no offset, and the fixed `sources` note names both sources. Past days still come from the store.
+measures freshness only and keeps its bar's time, never a price (review B1, decision A9-D15: that bar is newer than
+every admissible hour, and the model reads the whole context). Listed-hour bars have `src` "td" and n null; P_ref is
+the c of the newest listed hour's bar, timed at that hour's end; p0 is the o of the pair's t0 bar and p1 the c of
+its h_new bar. Levels are shown as Twelve Data gives them, with no offset, and the fixed `sources` note names both
+sources. Past days still come from the store.
 
 Detail codes: store_stale (more than 60 listed hours), store_mismatch (a raw file differs from its row), td_<reason>
 (the XAUUSD request not `ok` while a listed hour is required: td_key, td_plan, td_credits, td_server, td_invalid,
@@ -178,12 +180,12 @@ def build(view, head_sha, mode, w, asof, params, fetcher, with_memory=None):
         proxy = 100.0 * (prod - 1.0)
     ctx["fx"] = {"pairs": pairs, "proxy_pct": proxy, "exponents": list(hours.FX_EXPONENTS)}
 
-    # fresh (R-AN-87): measured only, never a change of status
+    # fresh (R-AN-87): measured only, never a change of status; its time only, no price (decision A9-D15)
     prov, values = fetcher.fetch("fresh", td.FRESH_URL, "1min")
     ctx["files"].append(prov)
     if prov["status"] == "ok" and values:
         newest = max(values, key=lambda v: v[0])
-        prov["bars"] = [td.bar_obj(newest)]
+        prov["bars"] = [{"t_utc": rec.iso(newest[0])}]
         if prov["fetched_utc"] is not None:
             lag = rec.parse_iso(prov["fetched_utc"]) - (newest[0] + dt.timedelta(seconds=60))
             ctx["fresh"] = {"bar_utc": rec.iso(newest[0]), "lag_s": int(lag.total_seconds())}
