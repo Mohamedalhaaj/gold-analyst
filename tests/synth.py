@@ -173,6 +173,81 @@ class FakeFeed:
         return 404, b""
 
 
+# ---------------------------------------------------------------- fake Twelve Data (register R-AN-87, §16.18 A9)
+TD_SYMS = {"XAU/USD": "XAUUSD", "EUR/USD": "EURUSD", "USD/JPY": "USDJPY", "GBP/USD": "GBPUSD", "USD/CAD": "USDCAD",
+           "USD/CHF": "USDCHF"}
+
+
+def td_body(values, status="ok", **extra):
+    """A Twelve Data time_series body: values [(datetime str, o, h, l, c)] with float prices written to 5 dp."""
+    doc = {"meta": {"symbol": "X", "interval": "1h", "type": "Physical Currency"},
+           "values": [{"datetime": t, "open": f"{o:.5f}", "high": f"{h:.5f}", "low": f"{l:.5f}", "close": f"{c:.5f}"}
+                      for (t, o, h, l, c) in values], "status": status}
+    doc.update(extra)
+    return json.dumps(doc).encode()
+
+
+def td_error(code, message="You have run out of API credits for the current minute."):
+    return json.dumps({"code": code, "message": message, "status": "error"}).encode()
+
+
+def td_query(url):
+    q = url.split("?", 1)[1]
+    return dict(kv.split("=", 1) for kv in q.split("&"))
+
+
+class FakeTD:
+    """Serves Twelve Data time_series: 1h bars from start_date to end_date inclusive (so the hour past the last one
+    the context needs is served too, and must be ignored), XAU only at trading hours (R-AN-15), FX at every weekday
+    hour; `fresh` (interval 1min, outputsize 1) gives the minute bar starting at floor_minute(now() - fresh_lag_s -
+    60 s). Records requests. `absent` = {(sym, hour)}; `responses` = {symbol | "fresh": (http, body) or a list of
+    them, served in order and the last one repeated}; `delay_s` = seconds each request takes on `clk`."""
+
+    def __init__(self, now=None, fn=price_path, absent=(), responses=None, fresh_lag_s=60, clk=None, delay_s=0.0):
+        self.now, self.fn, self.absent = now, fn, set(absent)
+        self.responses = {k: (list(v) if isinstance(v, list) else [v]) for k, v in (responses or {}).items()}
+        self.fresh_lag_s, self.clk, self.delay_s = fresh_lag_s, clk, delay_s
+        self.requests = []
+
+    def bar(self, sym, hour):
+        base = int(hour.timestamp())
+        if sym == "XAUUSD":
+            o, c = self.fn(base) / 1000.0, self.fn(base + 3599) / 1000.0
+            return round(o, 5), round(max(o, c) + 0.5, 5), round(min(o, c) - 0.5, 5), round(c, 5)
+        o = 1.1 + 0.001 * math.sin(base / 5000.0)
+        c = 1.1 + 0.001 * math.sin((base + 3599) / 5000.0)
+        if sym == "USDJPY":
+            o, c = o * 100, c * 100
+        return round(o, 5), round(max(o, c) + 0.0001, 5), round(min(o, c) - 0.0001, 5), round(c, 5)
+
+    def __call__(self, url, timeout):
+        self.requests.append(url)
+        if self.clk is not None and self.delay_s:
+            self.clk.sleep(self.delay_s)
+        q = td_query(url)
+        key = "fresh" if q.get("interval") == "1min" else q.get("symbol")
+        if key in self.responses:
+            seq = self.responses[key]
+            return seq.pop(0) if len(seq) > 1 else seq[0]
+        if key == "fresh":
+            t = (self.now() - dt.timedelta(seconds=self.fresh_lag_s + 60)).replace(second=0, microsecond=0)
+            o = self.fn(int(t.timestamp())) / 1000.0
+            return 200, td_body([(t.strftime("%Y-%m-%d %H:%M:%S"), o, o + 0.1, o - 0.1, o)])
+        sym = TD_SYMS[q["symbol"]]
+        a = dt.datetime.strptime(q["start_date"], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=UTC)
+        b = dt.datetime.strptime(q["end_date"], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=UTC)
+        out = []
+        h = a
+        while h <= b:
+            m = clock.to_server(h)
+            trading = (m.weekday() < 5 and m.hour >= 1) if sym == "XAUUSD" else h.weekday() < 5 or \
+                (h.weekday() == 6 and h.hour >= 21)
+            if trading and (sym, h) not in self.absent:
+                out.append((h.strftime("%Y-%m-%d %H:%M:%S"),) + self.bar(sym, h))
+            h += dt.timedelta(hours=1)
+        return 200, td_body(out)
+
+
 class FakeClock:
     def __init__(self, t0=0.0):
         self.t = t0

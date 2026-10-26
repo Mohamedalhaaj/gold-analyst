@@ -284,10 +284,10 @@ def test_a_lesson_and_a_revision_under_the_guard(tmp_path, monkeypatch):
 
 
 def test_the_probe_step_under_the_guard(tmp_path, monkeypatch):
-    from test_inbox_session import DUKAS
+    from test_inbox_session import ok_probe_get
     h = Harness(tmp_path, extra=dict(GUARD_FILES))
     h.world.owner_commit({"analyst/ops_changes.csv": "utc,file,sha256,head_sha,note\n"})   # main has a parent
-    h.probe_get = lambda u, t: (200, b"x") if u == DUKAS else (0, None)
+    h.probe_get = ok_probe_get()                     # Twelve Data answers, Dukascopy refused (§16.18 A9)
     h.at(2026, 10, 29, 10, 15)
     s = Gated(h, monkeypatch)
     assert s.bash("python3 analyst/run_window.py probe") == 0

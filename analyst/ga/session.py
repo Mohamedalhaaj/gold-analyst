@@ -1,5 +1,8 @@
 """The routine session steps: start, context, lock, lesson-start/lock, revision-start/lock, probe (prereg R1, R3, §3,
-§5; register R-AN-24..R-AN-31, R-AN-48, R-AN-49, R-AN-71, R-AN-84, §16.18 A6). FROZEN.
+§5; register R-AN-24..R-AN-31, R-AN-48, R-AN-49, R-AN-71, R-AN-84, R-AN-87, §16.18 A6, A9). FROZEN.
+
+Since §16.18 A9 `context` makes its market-data requests to Twelve Data (ga/td.py) without any key: the agent proxy
+adds the environment's network secret outside the VM, and this code never reads, holds or prints a key.
 
 Only enums, ids, hashes and paths are printed (and, in `probe`'s line, the record's `cc_version`, the first line of
 `claude --version`); no model text reaches stdout, a commit message or a shell argument.
@@ -17,7 +20,7 @@ import re
 import time
 from pathlib import Path
 
-from . import clock, context, gitops, hours, memory, paths, plan, probes, rec, records, tables, witness
+from . import clock, context, gitops, memory, paths, plan, probes, rec, records, tables, td, witness
 from .repo import GitView
 
 WORK_DIRNAME = ".analyst_run"
@@ -38,8 +41,8 @@ class Session:
         self.repo_dir = Path(repo_dir)
         self.git = git or gitops.Git(repo_dir)
         self.now = now or (lambda: dt.datetime.now(rec.UTC).replace(microsecond=0))
-        self.http_get = http_get or hours.urllib_get
-        self.probe_get = probe_get or hours.urllib_get
+        self.http_get = http_get or td.urllib_get          # the context's Twelve Data requests (§16.18 A9)
+        self.probe_get = probe_get or td.urllib_get        # keeps an error's body, where Twelve Data puts its code
         self.gh = gh or probes.run_gh
         self.direct_url = direct_url or probes.direct_url
         self.mono, self.sleep = mono, sleep
@@ -202,7 +205,7 @@ class Session:
             return 0
         w = clock.window_of(st["call_id"])
         params = paths.read_params(view)
-        fetcher = hours.Fetcher(get=self.http_get, clock=self.mono, sleep=self.sleep, now=self.now)
+        fetcher = td.Fetcher(get=self.http_get, clock=self.mono, sleep=self.sleep, now=self.now)
         ctx = context.build(view, head, mode, w, asof, params, fetcher)
         sha = context.context_sha256(ctx)
         st.update(context_sha256=sha, repo_head_sha=head, failures=0)

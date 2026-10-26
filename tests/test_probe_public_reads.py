@@ -17,11 +17,15 @@ def test_public_reads_are_measured():
 
 
 def test_the_first_probe_session_fails_only_on_the_dukascopy_outage():
+    """Under the rules it ran with (A8), the 503 of Saturday's throttling was its only failure; under §16.18 A9 the
+    same record fails nothing (Dukascopy is expected refused) and is incomplete: it holds no `net.twelvedata`."""
     rec = json.loads((ROOT / "analyst/canary/checks/PROBE_p20261024T024852Z.json").read_text("utf-8"))
     out = dict(rec["outcomes"])
+    assert out["net.dukascopy"] == 503 and rec["pass"]["net.dukascopy"] is False and rec["verdict"] == "fail"
     pm = probes.passes(out, rec["kind"])
     assert pm["git.ls_remote_public"] is None and pm["git.ls_remote_public_proxy"] is None
-    assert [p for p, v in pm.items() if v is False] == ["net.dukascopy"]       # the 503 of Saturday's throttling
+    assert [p for p, v in pm.items() if v is False] == []
+    assert pm["net.dukascopy"] is True and pm["net.twelvedata"] is None and probes.verdict(pm) == "incomplete"
 
 
 def test_refused_public_reads_still_pass():
@@ -37,7 +41,12 @@ def test_a_denied_webhook_list_passes():
     assert probes.passes({"rest.inbox": "ok", "rest.hooks": "ok"}, "probe")["rest.hooks"] is None
 
 
-def test_the_first_probe_session_passes_once_dukascopy_answers():
-    rec = json.loads((ROOT / "analyst/canary/checks/PROBE_p20261024T024852Z.json").read_text("utf-8"))
-    out = dict(rec["outcomes"], **{"net.dukascopy": 200})
-    assert probes.verdict(probes.passes(out, rec["kind"])) == "pass"
+def test_the_probe_sessions_pass_once_twelvedata_answers():
+    """§16.18 A9: with `net.twelvedata` 200 and Dukascopy refused, the three C20 probe records would pass."""
+    for tag in ("p20261024T024852Z", "p20261024T110641Z", "p20261026T000513Z"):
+        rec = json.loads((ROOT / f"analyst/canary/checks/PROBE_{tag}.json").read_text("utf-8"))
+        out = dict(rec["outcomes"], **{"net.twelvedata": 200})
+        assert out["net.dukascopy"] != 200, tag
+        assert probes.verdict(probes.passes(out, rec["kind"])) == "pass", tag
+        out["net.dukascopy"] = 200                             # a Dukascopy answer now fails the probe
+        assert probes.verdict(probes.passes(out, rec["kind"])) == "fail", tag

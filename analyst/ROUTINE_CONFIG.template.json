@@ -4,9 +4,15 @@
  "exported_utc": null,
  "environment": {
   "name": "gold-analyst",
-  "network": {"mode": "custom", "allow": ["datafeed.dukascopy.com"], "package_managers": "off",
-              "note": "The GitHub proxy is reachable at every network level and serves only the attached inbox. The session steps import only the standard library and analyst/vendor (tests/test_layout.py), so no package install is needed. Disclosed: through the inbox's webhooks GitHub itself can still reach any address for a session (R-AN-75 item 2); no network setting closes that. Since §16.18 A7 the session guard (.claude/hooks/guard.py, R-AN-85) refuses every call that could create one, and the run-log scan (R-AN-86) and the security log (R-AN-60) detect what it could miss."},
-  "secrets": "none",
+  "network": {"level": "None", "allowed_domains": [], "package_managers": false,
+              "note": "Register R-AN-61 and §16.18 A9 (decision A9-D11): access level None, no allowed domain, the default package-manager list off. The GitHub proxy (serving only the attached inbox), the Anthropic API and the hosts of a network secret stay reachable at every level. The session steps import only the standard library and analyst/vendor (tests/test_layout.py), so no package install is needed. Disclosed: through the inbox's webhooks GitHub itself can still reach any address for a session (R-AN-75 item 2); no network setting closes that. Since §16.18 A7 the session guard (.claude/hooks/guard.py, R-AN-85) refuses every call that could create one, and the run-log scan (R-AN-86) and the security log (R-AN-60) detect what it could miss."},
+  "environment_variables": 0,
+  "setup_script": false,
+  "network_secrets": [
+   {"name": "twelvedata", "hosts": ["api.twelvedata.com"], "header": "Authorization", "prefix": "apikey",
+    "marker": "sent",
+    "note": "Set by the owner in the environment dialog at claude.ai/code (Network secrets, Add secret): secret type Bearer, allowed website api.twelvedata.com only, one custom header named Authorization with prefix apikey and, as value, the client's Twelve Data key pasted from the macOS keychain item twelvedata-api-key by the owner, never by a session. Anthropic's agent proxy adds the header to requests for that host after they leave the VM; the session never sees the key, and its code (analyst/ga/td.py, R-AN-87) sends no key. The export records name, hosts, header, prefix and the dialog's marker (sent, or not_sent when the list marks the secret Not sent), never the value; tests/test_routine_config.py checks them. A secret applies to every session in its environment: this environment serves only these routines, and the exam runs in another environment without the secret (C19). If the account offers only the short form (one host, type Token), A9 cannot be set as written and the canary waits for a dated amendment."}
+  ],
   "setup": "none (dependencies are vendored; python3 >= 3.10, git and gh from the image)"
  },
  "github_app": "The Claude GitHub App installation that routine sessions use has repository access 'Only select repositories' holding gold-analyst-inbox, and never gold-analyst, gold-forward-watch or xauusd-quant (R-AN-75 item 1); no /web-setup copy of the owner's gh token is stored.",
@@ -14,27 +20,32 @@
   {"name": "analyst-w1", "trigger_id": null, "repo": "Mohamedalhaaj/gold-analyst-inbox", "enabled": true,
    "crons": ["20 6,7 * * 1-5"], "model": "claude-opus-5-5", "effort": null,
    "allowed_tools": ["Bash", "Read", "Write"], "branch_pushes": "default (claude/* only); unrestricted off",
+   "network": {"level": "None", "allowed_domains": [], "package_managers": false},
    "mcp_connections": [], "enabled_plugins": [], "project": null,
    "prompt": "Follow the section CALL of analyst/ROUTINE_PROMPT.md exactly.", "prompt_sha256": null},
   {"name": "analyst-w2", "trigger_id": null, "repo": "Mohamedalhaaj/gold-analyst-inbox", "enabled": true,
    "crons": ["50 12,13 * * 1-5"], "model": "claude-opus-5-5", "effort": null,
    "allowed_tools": ["Bash", "Read", "Write"], "branch_pushes": "default (claude/* only); unrestricted off",
+   "network": {"level": "None", "allowed_domains": [], "package_managers": false},
    "mcp_connections": [], "enabled_plugins": [], "project": null,
    "prompt": "Follow the section CALL of analyst/ROUTINE_PROMPT.md exactly.", "prompt_sha256": null},
   {"name": "analyst-lesson", "trigger_id": null, "repo": "Mohamedalhaaj/gold-analyst-inbox", "enabled": true,
    "crons": ["40 16 * * 2-6"], "model": "claude-opus-5-5", "effort": null,
    "allowed_tools": ["Bash", "Read", "Write"], "branch_pushes": "default (claude/* only); unrestricted off",
+   "network": {"level": "None", "allowed_domains": [], "package_managers": false},
    "mcp_connections": [], "enabled_plugins": [], "project": null,
    "prompt": "Follow the section LESSON of analyst/ROUTINE_PROMPT.md exactly.", "prompt_sha256": null},
   {"name": "analyst-revision", "trigger_id": null, "repo": "Mohamedalhaaj/gold-analyst-inbox", "enabled": true,
    "crons": ["0 18,22 * * 6"], "model": "claude-opus-5-5", "effort": null,
    "allowed_tools": ["Bash", "Read", "Write"], "branch_pushes": "default (claude/* only); unrestricted off",
+   "network": {"level": "None", "allowed_domains": [], "package_managers": false},
    "mcp_connections": [], "enabled_plugins": [], "project": null,
    "prompt": "Follow the section REVISION of analyst/ROUTINE_PROMPT.md exactly.", "prompt_sha256": null}
  ],
  "probe_session": {
-  "note": "The one-off probe session that must give probe_pass before canary_from is set (register §16.18 A6, Canary; R-AN-84; C5-C7). It runs as a routine of its own, analyst-probe, fired by the owner with run-now, in environment gold-analyst, attached to the inbox only, with the routines' network and tools, and with no connector and no plugin (its RemoteTrigger get is exported with the other routines, SEC-2); it may be rerun at any time. The owner copies the pushed probes/<tag>.json byte for byte to gold-analyst analyst/canary/checks/PROBE_<tag>.json. Since §16.18 A7 it is also C20, the test of the session guard (R-AN-74 C20, R-AN-85): its prompt follows the frozen analyst/PROBE_SESSION_PROMPT.md (step 1 is the probe, then two allowed controls, then harmless forbidden steps the guard must refuse). It runs after the guard's files are on inbox main and before 06:00 UTC of canary_from, again before live_from and after any change of .claude/**, analyst/ROUTINE_PROMPT.md or analyst/PROBE_SESSION_PROMPT.md. Changing this prompt is a routine update: clear the connectors, then export in its own commit. The environment gold-analyst holds no environment variable. The owner writes analyst/canary/checks/C20.json from the run log and runs python3 analyst/jobs/scan_runs.py on it. Since the third review of A7 (decision 22) the probe record holds cc_version, the session's Claude Code version (the first line of claude --version); C20.json copies it unchanged from analyst/canary/checks/PROBE_<tag>.json, and C20 passes only with at least 2.1.295, the version onFailure needs (R-AN-85).",
+  "note": "The one-off probe session that must give probe_pass before canary_from is set (register §16.18 A6, Canary; R-AN-84; C5-C7). It runs as a routine of its own, analyst-probe, fired by the owner with run-now, in environment gold-analyst, attached to the inbox only, with the routines' network and tools, and with no connector and no plugin (its RemoteTrigger get is exported with the other routines, SEC-2); it may be rerun at any time. The owner copies the pushed probes/<tag>.json byte for byte to gold-analyst analyst/canary/checks/PROBE_<tag>.json. Since §16.18 A7 it is also C20, the test of the session guard (R-AN-74 C20, R-AN-85): its prompt follows the frozen analyst/PROBE_SESSION_PROMPT.md (step 1 is the probe, then two allowed controls, then harmless forbidden steps the guard must refuse). It runs after the guard's files are on inbox main and before 06:00 UTC of canary_from, again before live_from and after any change of .claude/**, analyst/ROUTINE_PROMPT.md or analyst/PROBE_SESSION_PROMPT.md. Changing this prompt is a routine update: clear the connectors, then export in its own commit. The environment gold-analyst holds no environment variable and, since §16.18 A9, one network secret (api.twelvedata.com); step 1 passes only with net.twelvedata 200 and net.dukascopy refused. The owner writes analyst/canary/checks/C20.json from the run log and runs python3 analyst/jobs/scan_runs.py on it. Since the third review of A7 (decision 22) the probe record holds cc_version, the session's Claude Code version (the first line of claude --version); C20.json copies it unchanged from analyst/canary/checks/PROBE_<tag>.json, and C20 passes only with at least 2.1.295, the version onFailure needs (R-AN-85).",
   "name": "analyst-probe", "repo": "Mohamedalhaaj/gold-analyst-inbox", "model": "claude-opus-5-5", "allowed_tools": ["Bash", "Read", "Write"],
+  "network": {"level": "None", "allowed_domains": [], "package_managers": false},
   "mcp_connections": [], "enabled_plugins": [], "project": null,
   "prompt": "Follow analyst/PROBE_SESSION_PROMPT.md exactly."
  }

@@ -1,19 +1,32 @@
-"""The context builder (prereg R2 and §2; register R-AN-14..R-AN-23). FROZEN.
+"""The context builder (prereg R2 and §2; register R-AN-14..R-AN-23, R-AN-87; §16.18 A9). FROZEN.
 
 Nothing after the fetch time enters: hour h is admissible iff h + 1 h <= asof_utc − L_min, and the history comes from
 the mirrored store at repo_head_sha. On a data or D_ref failure the context is returned with status
 `no_call:data` / `no_call:d_ref` and a detail code; a partial context is never used for a plan.
 
-Detail codes: store_stale (more than 60 listed hours), store_mismatch (a raw file differs from its row),
-hour_absent (a required hour not present, or an optional hour invalid/error), no_price (no P_ref at all), and
-D_ref's rows / stale / nonpositive. Fetching stops at the first absent hour (interpretation, logged for the register).
+Since §16.18 A9 (`analyst-context/2`) the model day's inputs come from Twelve Data (ga/td.py, R-AN-87): one 1h request
+for the listed XAU hours, one for each pair of the dollar proxy (t0 to h_new), then the 1-minute `fresh` request that
+measures freshness only. Listed-hour bars have `src` "td" and n null; P_ref is the c of the newest listed hour's bar,
+timed at that hour's end; p0 is the o of the pair's t0 bar and p1 the c of its h_new bar. Levels are shown as Twelve
+Data gives them, with no offset, and the fixed `sources` note names both sources. Past days still come from the store.
+
+Detail codes: store_stale (more than 60 listed hours), store_mismatch (a raw file differs from its row), td_<reason>
+(the XAUUSD request not `ok` while a listed hour is required: td_key, td_plan, td_credits, td_server, td_invalid,
+td_other, td_budget), hour_absent (XAUUSD `ok` without a bar at a required listed hour), no_price (no P_ref at all),
+and D_ref's rows / stale / nonpositive. Each of these data stops ends the requests: no later request is made.
+Interpretations (logged for the register): `fresh` is null when its fetched_utc is unknown (no session clock); with t0
+= h_new a pair keeps its one bar for both p0 and p1.
 """
 import datetime as dt
 import math
 
-from . import clock, dref, hours, memory, rec, store, tables
+from . import clock, dref, hours, memory, rec, store, tables, td
 
-SCHEMA = "analyst-context/1"
+SCHEMA = "analyst-context/2"
+SOURCES = {"history": "dukascopy_store", "today": "twelvedata_1h",
+           "note": "bars_h1 entries with src td, p_ref when p_ref_src is td, and fx come from Twelve Data hourly bars "
+                   "in UTC; bars_h1 entries with src store are Dukascopy mid; bars_d1 are built from bars_h1; Twelve "
+                   "Data and Dukascopy levels can differ slightly; settlement uses Dukascopy."}
 MAX_LISTED_HOURS = 60
 HIST_WEEKDAYS = 10
 
@@ -38,15 +51,19 @@ def _store_bar(minutes, h):
     return _bar(h, mids[0][0], max(m[1] for m in mids), min(m[2] for m in mids), mids[-1][3], len(mids), "store")
 
 
-def _tick_bar(h, ticks):
-    if not ticks:
+def _td_bar(h, v):
+    if v is None:
         return None
-    mids = [hours.tick_mid("XAUUSD", a, b) for (_ms, a, b, _av, _bv) in ticks]
-    return _bar(h, mids[0], max(mids), min(mids), mids[-1], len(mids), "tick")
+    _t, o, hi, lo, c = v
+    return _bar(h, o, hi, lo, c, None, "td")
+
+
+def _by_time(values):
+    return {v[0]: v for v in values}
 
 
 def build(view, head_sha, mode, w, asof, params, fetcher, with_memory=None):
-    """The context object for window `w` at `asof` (aware UTC, floored to the second)."""
+    """The context object for window `w` at `asof` (aware UTC, floored to the second); `fetcher` is a td.Fetcher."""
     asof = rec.floor_s(asof)
     asof_s = rec.iso(asof)
     d = w.day
@@ -70,7 +87,8 @@ def build(view, head_sha, mode, w, asof, params, fetcher, with_memory=None):
         "store": {"complete_utc": rec.iso(complete), "start_hist_utc": rec.iso(start_hist),
                   "days_csv_sha256": rec.sha256_bytes(days_b), "slots_sha256": rec.sha256_bytes(slots_b)},
         "files": [], "bars_h1": [], "bars_d1": [], "p_ref": None,
-        "fx": None, "us2y": "unknown", "events": events.context_block(d), "d_ref": None, "memory": None,
+        "fx": None, "us2y": "unknown", "fresh": None, "sources": dict(SOURCES), "events": events.context_block(d),
+        "d_ref": None, "memory": None,
         "status": "ok", "detail": None,
     }
 
@@ -87,21 +105,27 @@ def build(view, head_sha, mode, w, asof, params, fetcher, with_memory=None):
     except store.StoreMismatch:
         return fail("no_call:data", "store_mismatch")
 
-    tick_files = {}
-    for h in listed:
-        prov, ticks = fetcher.fetch("XAUUSD", h)
+    # the listed XAU hours: one Twelve Data request (R-AN-87)
+    td_hours = {}
+    if listed:
+        prov, values = fetcher.fetch("XAUUSD", td.series_url("XAUUSD", listed[0], listed[-1] + clock.HOUR), "1h")
         ctx["files"].append(prov)
-        optional = holidays.nyse_full(clock.to_server(h).date())
-        if prov["status"] == "present":
-            tick_files[h] = ticks
-        elif not (optional and prov["status"] == "empty"):
-            return fail("no_call:data", "hour_absent")
+        required = [h for h in listed if not holidays.nyse_full(clock.to_server(h).date())]
+        if prov["status"] != "ok":
+            if required:
+                return fail("no_call:data", "td_" + prov["reason"])
+        else:
+            got = _by_time(values)
+            td_hours = {h: got[h] for h in listed if h in got}
+            prov["bars"] = [td.bar_obj(td_hours[h]) for h in listed if h in td_hours]
+            if any(h not in td_hours for h in required):
+                return fail("no_call:data", "hour_absent")
 
-    # hourly bars over [start_hist, h_new]: store before complete_utc, tick files after
+    # hourly bars over [start_hist, h_new]: store before complete_utc, Twelve Data after
     for h in clock.hours_between(start_hist, h_new):
         if not trading_hour(h):
             continue
-        b = _store_bar(minutes, h) if h < complete else _tick_bar(h, tick_files.get(h))
+        b = _store_bar(minutes, h) if h < complete else _td_bar(h, td_hours.get(h))
         if b is not None:
             ctx["bars_h1"].append(b)
     hist_days = [clock.weekday_before(d, k) for k in range(HIST_WEEKDAYS, 0, -1)]
@@ -113,11 +137,10 @@ def build(view, head_sha, mode, w, asof, params, fetcher, with_memory=None):
 
     # P_ref (R-AN-18)
     asof_ms = rec.epoch_ms(asof)
-    present = [h for h in listed if h in tick_files]
+    present = [h for h in listed if h in td_hours]
     if present:
         h = present[-1]
-        ms, a, b, _av, _bv = tick_files[h][-1]
-        p_ref, src, t_ms = hours.tick_mid("XAUUSD", a, b), "tick", rec.epoch_ms(h) + ms
+        p_ref, src, t_ms = td_hours[h][4], "td", rec.epoch_ms(h) + hours.HOUR_MS
     else:
         last = None
         lim = int(complete.timestamp())
@@ -134,17 +157,14 @@ def build(view, head_sha, mode, w, asof, params, fetcher, with_memory=None):
 
     # FX and the dollar proxy (R-AN-19)
     t0h = clock.model_to_utc(dt.datetime.combine(d, dt.time(0)))
-    got = {}
-    for which, hh in (("t0", t0h), ("t1", h_new)):
-        for pair in hours.FX_PAIRS:
-            prov, ticks = fetcher.fetch(pair, hh)
-            ctx["files"].append(prov)
-            got[(pair, which)] = ticks if prov["status"] == "present" else None
     pairs, ratios = [], []
     for pair in hours.FX_PAIRS:
-        t0, t1 = got[(pair, "t0")], got[(pair, "t1")]
-        p0 = hours.tick_mid(pair, t0[0][1], t0[0][2]) if t0 else None
-        p1 = hours.tick_mid(pair, t1[-1][1], t1[-1][2]) if t1 else None
+        prov, values = fetcher.fetch(pair, td.series_url(pair, t0h, h_new + clock.HOUR), "1h")
+        ctx["files"].append(prov)
+        got = _by_time(values) if prov["status"] == "ok" else {}
+        prov["bars"] = [td.bar_obj(got[h]) for h in sorted({t0h, h_new}) if h in got]
+        p0 = got[t0h][1] if t0h in got else None
+        p1 = got[h_new][4] if h_new in got else None
         pct = 100.0 * (p1 / p0 - 1.0) if (p0 is not None and p1 is not None) else None
         pairs.append({"pair": pair, "p0": p0 if (p0 is not None and p1 is not None) else None,
                       "p1": p1 if (p0 is not None and p1 is not None) else None, "pair_pct": pct,
@@ -157,6 +177,16 @@ def build(view, head_sha, mode, w, asof, params, fetcher, with_memory=None):
             prod *= r ** e
         proxy = 100.0 * (prod - 1.0)
     ctx["fx"] = {"pairs": pairs, "proxy_pct": proxy, "exponents": list(hours.FX_EXPONENTS)}
+
+    # fresh (R-AN-87): measured only, never a change of status
+    prov, values = fetcher.fetch("fresh", td.FRESH_URL, "1min")
+    ctx["files"].append(prov)
+    if prov["status"] == "ok" and values:
+        newest = max(values, key=lambda v: v[0])
+        prov["bars"] = [td.bar_obj(newest)]
+        if prov["fetched_utc"] is not None:
+            lag = rec.parse_iso(prov["fetched_utc"]) - (newest[0] + dt.timedelta(seconds=60))
+            ctx["fresh"] = {"bar_utc": rec.iso(newest[0]), "lag_s": int(lag.total_seconds())}
 
     # D_ref (R-AN-21)
     block, detail = dref.compute(slots_b.decode("utf-8"), w.slot, d, asof_s, p_ref)

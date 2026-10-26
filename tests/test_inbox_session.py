@@ -12,12 +12,24 @@ from pathlib import Path
 
 import pytest
 
-from ga import probes, rec, records
+from ga import probes, rec, records, td
 from harness import PLAN, Harness
-from synth import INBOX_REPO, git
+from synth import INBOX_REPO, git, td_body, td_error
 
 W1 = "2026-11-10_W1"
 DUKAS = probes.DUKASCOPY_URL
+TD_FRESH = probes.TWELVEDATA_URL
+FRESH_OK = td_body([("2026-10-29 10:13:00", 3990.1, 3990.4, 3989.9, 3990.2)])
+
+
+def ok_probe_get(*also_200, fresh=(200, FRESH_OK)):
+    """The probe GETs of a conforming environment (§16.18 A9): Twelve Data answers through the network secret, every
+    other host (Dukascopy included) gives no response; `also_200` answer 200."""
+    def get(u, t):
+        if u == TD_FRESH:
+            return fresh
+        return (200, b"x") if u in also_200 else (0, None)
+    return get
 
 
 def heads(h, prefix="refs/"):
@@ -98,7 +110,7 @@ def test_revision_start_refuses_a_revision_attempt_in_flight(tmp_path):
 def probe_world(tmp_path, **kw):
     h = Harness(tmp_path, **kw)
     h.world.owner_commit({"analyst/ops_changes.csv": "utc,file,sha256,head_sha,note\n"})   # main has a parent
-    h.probe_get = lambda u, t: (200, b"x") if u == DUKAS else (0, None)
+    h.probe_get = ok_probe_get()
     h.at(2026, 10, 29, 10, 15)
     return h
 
@@ -111,7 +123,7 @@ def run_probe(h):
 
 
 EXPECTED = {
-    "net.dukascopy": 200, "net.google": 0, "net.raw_public": 0, "net.api_root": 0,
+    "net.twelvedata": 200, "net.dukascopy": 0, "net.google": 0, "net.raw_public": 0, "net.api_root": 0,
     "rest.inbox": "ok", "rest.ga": "scope", "rest.gfw": "scope", "rest.hooks": 0,
     "git.ls_remote_inbox": "accepted", "git.ls_remote_gfw": "refused", "git.ls_remote_gfw_proxy": "refused",
     "git.ls_remote_public": "refused", "git.ls_remote_public_proxy": "refused",
@@ -178,7 +190,9 @@ def test_probe_record_holds_no_text(tmp_path):
 @pytest.mark.parametrize("case,probe", [
     ("admin", "admin_probe"), ("hooks", "rest.hooks"), ("rest_ga", "rest.ga"), ("ga_proxy_writable", "ga_push_proxy"),
     ("ga_proxy_rule", "ga_push_proxy"), ("raw_public", "net.raw_public"), ("rest_force", "rest.force_main"),
-    ("google", "net.google"), ("no_rules", "push_main"),
+    ("google", "net.google"), ("no_rules", "push_main"), ("dukascopy", "net.dukascopy"),
+    ("td_key", "net.twelvedata"), ("td_credits", "net.twelvedata"), ("td_down", "net.twelvedata"),
+    ("td_invalid", "net.twelvedata"),
 ])
 def test_a_failed_probe_fails_the_verdict(tmp_path, case, probe):
     h = probe_world(tmp_path)
@@ -195,11 +209,21 @@ def test_a_failed_probe_fails_the_verdict(tmp_path, case, probe):
             (ga / "hooks" / "pre-receive").write_text("#!/bin/sh\necho 'error: GH013: rule' >&2\nexit 1\n")
             (ga / "hooks" / "pre-receive").chmod(0o755)
     elif case == "raw_public":
-        h.probe_get = lambda u, t: (200, b"x") if u in (DUKAS, probes.RAW_PUBLIC_URL) else (0, None)
+        h.probe_get = ok_probe_get(probes.RAW_PUBLIC_URL)
     elif case == "rest_force":
         h.gh.routes[("PATCH", f"repos/{INBOX_REPO}/git/refs/heads/main")] = (200, {})
     elif case == "google":
-        h.probe_get = lambda u, t: (200, b"x") if u in (DUKAS, probes.GOOGLE_URL) else (0, None)
+        h.probe_get = ok_probe_get(probes.GOOGLE_URL)
+    elif case == "dukascopy":                                  # §16.18 A9: the environment allows no domain
+        h.probe_get = ok_probe_get(DUKAS)
+    elif case == "td_key":                                     # the secret is missing or wrong
+        h.probe_get = ok_probe_get(fresh=(401, td_error(401)))
+    elif case == "td_credits":                                 # `probe` has no null outcome
+        h.probe_get = ok_probe_get(fresh=(200, td_error(429)))
+    elif case == "td_down":
+        h.probe_get = ok_probe_get(fresh=(0, None))
+    elif case == "td_invalid":
+        h.probe_get = ok_probe_get(fresh=(200, b"<html>"))
     elif case == "no_rules":
         (h.world.inbox / "hooks" / "pre-receive").unlink()
     rc, verdict, res = run_probe(h)
@@ -265,13 +289,48 @@ def test_pass_rules(outcomes, probe, want):
 
 
 @pytest.mark.parametrize("kind,code,want", [
-    ("canary", 200, True), ("canary", 404, True), ("canary", 0, None),     # null when every fetch gave 0 (R-AN-84,
-    ("probe", 200, True), ("probe", 404, False), ("probe", 0, False),      # fourth review); `probe` keeps 200
+    ("canary", 200, False), ("canary", 404, True), ("canary", 0, True), ("canary", 503, True),   # expected refused
+    ("probe", 200, False), ("probe", 404, True), ("probe", 0, True), ("probe", 503, True),       # (§16.18 A9)
 ])
 def test_net_dukascopy_pass_rule(kind, code, want):
     p = probes.passes(dict(EXPECTED, **{"net.dukascopy": code}), kind)
     assert p["net.dukascopy"] is want
     assert probes.verdict(p) == {True: "pass", False: "fail", None: "incomplete"}[want]
+
+
+@pytest.mark.parametrize("kind,code,want", [
+    ("canary", 200, True), ("canary", 0, None), ("canary", -2, None), ("canary", 429, None), ("canary", 500, None),
+    ("canary", 503, None), ("canary", 599, None), ("canary", 401, False), ("canary", 403, False),
+    ("canary", 404, False), ("canary", 400, False), ("canary", -1, False),
+    ("probe", 200, True), ("probe", 0, False), ("probe", -2, False), ("probe", 429, False), ("probe", 503, False),
+    ("probe", 401, False), ("probe", -1, False),
+])
+def test_net_twelvedata_pass_rule(kind, code, want):
+    """§16.18 A9 (decision A9-D12): an outage or spent credits are null in a canary, which the call records as
+    `no_call:data`; a wrong secret or request (401, 403, another 4xx, −1) fails, since every later call repeats it."""
+    p = probes.passes(dict(EXPECTED, **{"net.twelvedata": code}), kind)
+    assert p["net.twelvedata"] is want
+    assert probes.verdict(p) == {True: "pass", False: "fail", None: "incomplete"}[want]
+
+
+def test_the_data_control_runs_first_and_dukascopy_second():
+    assert probes.ORDER[:2] == ("net.twelvedata", "net.dukascopy")
+    assert probes.TWELVEDATA_URL == td.FRESH_URL and "apikey" not in probes.TWELVEDATA_URL
+
+
+def test_probe_makes_one_keyless_twelvedata_try(tmp_path):
+    h = probe_world(tmp_path)
+    calls = []
+    inner = h.probe_get
+
+    def get(u, t):
+        calls.append((u, t))
+        return inner(u, t)
+    h.probe_get = get
+    _rc, verdict, res = run_probe(h)
+    assert verdict == "probe_pass" and res["outcomes"]["net.twelvedata"] == 200
+    assert [c for c in calls if "twelvedata" in c[0]] == [(TD_FRESH, probes.HTTP_TIMEOUT_S)]
+    assert calls[0][0] == TD_FRESH and calls[1][0] == DUKAS
 
 
 def test_the_git_positive_control_nulls_every_git_probe():
@@ -423,7 +482,9 @@ def test_canary_context_runs_the_probes_after_writing_the_context(tmp_path):
     h.push_and_merge()
     cp = h.main_json(f"analyst/canary/calls/{W1}.json")["canary_probe"]
     assert (cp["schema"], cp["kind"], cp["tag"], cp["verdict"]) == ("analyst-probe/1", "canary", W1, "pass")
-    assert cp["outcomes"]["net.dukascopy"] == 200                 # the context's own fetches
+    assert cp["outcomes"]["net.twelvedata"] == 200                # the context's own first request (§16.18 A9)
+    assert cp["outcomes"]["net.dukascopy"] == 0                   # refused: the environment allows no domain
+    assert len(h.feed.requests) == 7                              # the canary probe spent no request of its own
     assert cp["probe_utc"] == "2026-11-10T07:21:00Z"
     assert cp["cc_version"] == "test-cc"                  # both kinds of the record (third review of A7)
     assert sorted(r for r in heads(h, "refs/heads/claude/probe-*")) == sorted(

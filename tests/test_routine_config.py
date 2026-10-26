@@ -13,6 +13,16 @@ the `repo` rule's condition every routine must have the key `project`. Interpret
 `project` other than null, or such a `raw` field with a value other than null, "", [] or {}, is refused in every
 committed export, whatever the condition, as the judge's A13 `routine_project` reads the version in force; only the
 missing key waits for the condition, so the export in force (d1725d7, no `project` key) passes until then.
+
+§16.18 A9 (decision A9-D11): the environment `gold-analyst` has access level None and exactly one network secret, for
+api.twelvedata.com, header Authorization with prefix apikey. The export records it, never the key: each routine's
+`network` = {"level": "None", "allowed_domains": [], "package_managers": false} and a top-level `environment` = {"name":
+"gold-analyst", "environment_variables": 0, "setup_script": false, "network_secrets": [{"name", "hosts", "header",
+"prefix", "marker"}]}, with marker "sent". Interpretation (logged for the register): the rule binds under the `repo`
+rule's condition with A9's date in place of PINS.inbox_from_utc (canary_from or live_from set, or an export at or
+after A9_FROM_UTC), so the export in force (2026-10-24T02:47Z, before A9) passes until the owner sets the environment
+and commits a fresh export, which the canary needs anyway; a secret object with any other key (a value, say) is
+refused.
 """
 import copy
 import json
@@ -21,6 +31,9 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+A9_FROM_UTC = "2026-10-26T00:00:00Z"
+A9_NETWORK = {"level": "None", "allowed_domains": [], "package_managers": False}
+A9_SECRET_KEYS = ["name", "hosts", "header", "prefix", "marker"]
 
 
 def load(p):
@@ -47,6 +60,40 @@ def no_value(v):
     return v is None or (type(v) in (str, list, dict) and len(v) == 0)
 
 
+def a9_problems(export, mode):
+    """Why an export breaks R-AN-61's environment rule of §16.18 A9; [] when it holds or does not bind yet."""
+    binds = bool(mode.get("canary_from") or mode.get("live_from")) or (export.get("exported_utc") or "") >= A9_FROM_UTC
+    if not binds:
+        return []
+    out = []
+    env = export.get("environment") if isinstance(export.get("environment"), dict) else {}
+    if env.get("name") != "gold-analyst":
+        out.append("environment: name")
+    if env.get("environment_variables") != 0 or type(env.get("environment_variables")) is not int:
+        out.append("environment: environment_variables")
+    if env.get("setup_script") is not False:
+        out.append("environment: setup_script")
+    secrets = env.get("network_secrets")
+    if not isinstance(secrets, list) or len(secrets) != 1 or not isinstance(secrets[0], dict):
+        out.append("environment: network_secrets")
+    else:
+        sec = secrets[0]
+        if sorted(sec) != sorted(A9_SECRET_KEYS):
+            out.append("environment: secret keys")
+        if not (isinstance(sec.get("name"), str) and sec["name"]):
+            out.append("environment: secret name")
+        for k, want in (("hosts", ["api.twelvedata.com"]), ("header", "Authorization"), ("prefix", "apikey"),
+                        ("marker", "sent")):
+            if sec.get(k) != want:
+                out.append(f"environment: secret {k}")
+    for r in export.get("routines") or []:
+        net = r.get("network")
+        if not (isinstance(net, dict) and net == A9_NETWORK and all(type(net[k]) is type(v)
+                                                                       for k, v in A9_NETWORK.items())):
+            out.append(f"{r.get('name')}: network")
+    return out
+
+
 def problems(export, pins, mode):
     """Why an `analyst/ROUTINE_CONFIG.json` export breaks R-AN-61; [] when it holds."""
     out = []
@@ -70,6 +117,7 @@ def problems(export, pins, mode):
         if ("project" in r and r["project"] is not None) or (in_use and "project" not in r):
             out.append(f"{r.get('name')}: project")
         out.extend(f"{r.get('name')}: {w}" for w, v in project_fields(raw) if not no_value(v))
+    out.extend(a9_problems(export, mode))
     return out
 
 
@@ -172,7 +220,8 @@ def test_the_project_key_is_needed_only_from_the_repo_rules_condition():
     export["exported_utc"] = "2026-10-23T08:52:00Z"
     assert problems(export, pins, mode) == []
     assert problems(export, {**pins, "inbox_from_utc": None}, mode) == []
-    assert problems(export, pins, {"canary_from": None, "live_from": "2026-11-09"}) == ["analyst-w1: project"]
+    assert [p for p in problems(export, pins, {"canary_from": None, "live_from": "2026-11-09"})
+            if not p.endswith(": network") and not p.startswith("environment")] == ["analyst-w1: project"]
     export["routines"][0]["project"] = "Gold analyst"                   # a project is refused whatever the time
     assert problems(export, pins, mode) == ["analyst-w1: project"]
     export["routines"][0]["project"] = None
@@ -192,3 +241,104 @@ def test_the_template_prompts():
     p = t["probe_session"]
     assert (p["name"], p["prompt"]) == ("analyst-probe", "Follow analyst/PROBE_SESSION_PROMPT.md exactly.")
     assert p["allowed_tools"] == ["Bash", "Read", "Write"] and "C20" in p["note"]
+
+
+# ---------------------------------------------------------------- §16.18 A9: network level None and one secret
+def _a9():
+    export, pins, mode = _good()
+    export = copy.deepcopy(export)
+    export["exported_utc"] = "2026-10-27T09:00:00Z"
+    export["routines"][0]["network"] = dict(A9_NETWORK)
+    export["environment"] = {"name": "gold-analyst", "environment_variables": 0, "setup_script": False,
+                             "network_secrets": [{"name": "twelvedata", "hosts": ["api.twelvedata.com"],
+                                                  "header": "Authorization", "prefix": "apikey", "marker": "sent"}]}
+    return export, pins, mode
+
+
+def test_an_a9_export_passes():
+    assert problems(*_a9()) == []
+
+
+@pytest.mark.parametrize("plant,want", [
+    ("custom", "analyst-w1: network"), ("domain", "analyst-w1: network"), ("pkg", "analyst-w1: network"),
+    ("pkg_str", "analyst-w1: network"), ("no_network", "analyst-w1: network"),
+    ("env_var", "environment: environment_variables"), ("env_var_bool", "environment: environment_variables"),
+    ("setup", "environment: setup_script"), ("env_name", "environment: name"),
+    ("no_secret", "environment: network_secrets"), ("two_secrets", "environment: network_secrets"),
+    ("host", "environment: secret hosts"), ("extra_host", "environment: secret hosts"),
+    ("header", "environment: secret header"), ("prefix", "environment: secret prefix"),
+    ("not_sent", "environment: secret marker"), ("value", "environment: secret keys"),
+    ("no_name", "environment: secret name"), ("no_environment", "environment: name"),
+])
+def test_a_planted_a9_export_is_caught(plant, want):
+    export, pins, mode = _a9()
+    r, env = export["routines"][0], export["environment"]
+    sec = env["network_secrets"][0]
+    if plant == "custom":
+        r["network"]["level"] = "Custom"
+    elif plant == "domain":
+        r["network"]["allowed_domains"] = ["datafeed.dukascopy.com"]
+    elif plant == "pkg":
+        r["network"]["package_managers"] = True
+    elif plant == "pkg_str":
+        r["network"]["package_managers"] = "off"
+    elif plant == "no_network":
+        del r["network"]
+    elif plant == "env_var":
+        env["environment_variables"] = 1
+    elif plant == "env_var_bool":
+        env["environment_variables"] = False
+    elif plant == "setup":
+        env["setup_script"] = True
+    elif plant == "env_name":
+        env["name"] = "default"
+    elif plant == "no_secret":
+        env["network_secrets"] = []
+    elif plant == "two_secrets":
+        env["network_secrets"].append(dict(sec, name="other"))
+    elif plant == "host":
+        sec["hosts"] = ["api.example.com"]
+    elif plant == "extra_host":
+        sec["hosts"] = ["api.twelvedata.com", "datafeed.dukascopy.com"]
+    elif plant == "header":
+        sec["header"] = "X-Api-Key"
+    elif plant == "prefix":
+        sec["prefix"] = "Bearer"
+    elif plant == "not_sent":
+        sec["marker"] = "not_sent"
+    elif plant == "value":
+        sec["value"] = "****"
+    elif plant == "no_name":
+        sec["name"] = ""
+    else:
+        del export["environment"]
+    assert want in problems(export, pins, mode)
+
+
+def test_the_a9_rule_binds_from_its_date_or_the_canary():
+    """The export in force (2026-10-24, before A9) passes until canary_from or live_from is set; an export dated at or
+    after A9 must show the A9 environment."""
+    export, pins, mode = _good()
+    export = copy.deepcopy(export)
+    export["exported_utc"] = "2026-10-24T02:47:00Z"
+    assert a9_problems(export, mode) == [] and problems(export, pins, mode) == []
+    assert a9_problems(export, {"canary_from": "2026-10-30", "live_from": None}) != []
+    assert a9_problems(export, {"canary_from": None, "live_from": "2026-11-09"}) != []
+    export["exported_utc"] = A9_FROM_UTC
+    assert "environment: network_secrets" in a9_problems(export, mode)
+
+
+def test_the_template_names_the_a9_environment():
+    t = load("analyst/ROUTINE_CONFIG.template.json")
+    env = t["environment"]
+    assert (env["name"], env["environment_variables"], env["setup_script"]) == ("gold-analyst", 0, False)
+    assert {k: env["network"][k] for k in A9_NETWORK} == A9_NETWORK
+    assert len(env["network_secrets"]) == 1
+    sec = env["network_secrets"][0]
+    assert {k: sec[k] for k in A9_SECRET_KEYS if k != "name"} == {
+        "hosts": ["api.twelvedata.com"], "header": "Authorization", "prefix": "apikey", "marker": "sent"}
+    assert set(sec) == set(A9_SECRET_KEYS) | {"note"} and "Bearer" in sec["note"] and "never the value" in sec["note"]
+    for r in t["routines"] + [t["probe_session"]]:
+        assert r["network"] == A9_NETWORK, r["name"]
+    text = json.dumps(t)
+    assert "datafeed.dukascopy.com" not in text

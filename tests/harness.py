@@ -7,7 +7,7 @@ import json
 
 from ga import clock, gitops, merge, rec, store
 from ga.session import Session
-from synth import (INBOX_REPO, FakeAPI, FakeClock, FakeFeed, FakeGH, World, default_slots, git, mode_json,
+from synth import (INBOX_REPO, FakeAPI, FakeClock, FakeGH, FakeTD, World, default_slots, git, mode_json,
                    repo_files, store_files)
 
 UTC = rec.UTC
@@ -31,7 +31,7 @@ class Harness:
         self.world = World(tmp, files, protect_main=True, inbox=True)
         self.t = [dt.datetime(2026, 11, 10, 7, 20, tzinfo=UTC)]
         self.api = FakeAPI(self.now)
-        self.feed = FakeFeed()
+        self.feed = FakeTD(now=self.now)                # Twelve Data (register R-AN-87, §16.18 A9)
         self.clk = FakeClock()
         self.log = []
         self.merge_log = []

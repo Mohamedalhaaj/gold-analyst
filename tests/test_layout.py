@@ -137,7 +137,7 @@ def test_tzdata_files_match_the_wheel_record():
 
 
 SESSION_MODULES = ("__init__", "clock", "context", "dref", "examlock", "gitops", "hours", "memory", "paths", "plan",
-                   "probes", "rec", "records", "repo", "session", "store", "tables", "weekly", "witness")
+                   "probes", "rec", "records", "repo", "session", "store", "tables", "td", "weekly", "witness")
 
 
 def test_session_modules_use_only_the_standard_library():
@@ -169,7 +169,7 @@ sys.meta_path.insert(0, Block())
 sys.path.insert(0, "analyst")
 before = set(sys.modules)
 import run_window
-from ga import session, probes, examlock, weekly, gitops, memory, context, hours, store, tables
+from ga import session, probes, examlock, weekly, gitops, memory, context, hours, store, tables, td
 import ga.session as s
 for step in ("start", "context", "lock", "lesson_start", "lesson_lock", "revision_start", "revision_lock", "probe"):
     assert callable(getattr(s.Session, step)), step
@@ -189,7 +189,8 @@ for m in new:
 def test_session_steps_import_with_numpy_and_pandas_blocked():
     """R-AN-61 (§16.18 A6): the session steps (start, context, lock, lesson-*, revision-*, lock --exam, probe) need
     no package install: imported with numpy and pandas blocked, they load only the standard library, ga/ and the
-    vendored tzdata, so the routine network can be datafeed.dukascopy.com only with the package managers off."""
+    vendored tzdata, so the routine network needs no package manager (since §16.18 A9: access level None, with
+    the one network secret for api.twelvedata.com)."""
     import subprocess
     import sys
     p = subprocess.run([sys.executable, "-I", "-c", BLOCKER], cwd=ROOT, capture_output=True, text=True)

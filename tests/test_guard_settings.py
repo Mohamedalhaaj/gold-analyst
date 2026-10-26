@@ -15,7 +15,7 @@ import datetime as dt
 import json
 import shlex
 
-from ga import clock, frozen, hours, probes
+from ga import clock, frozen, probes, td
 from guardkit import GUARD, ROOT, SETTINGS, load
 from synth import FakeClock
 
@@ -143,13 +143,13 @@ def test_the_guard_refuses_a_timeout_below_the_settings_value():
     assert load().BASH_TIMEOUT_MIN_MS == int(env["BASH_DEFAULT_TIMEOUT_MS"]) == int(env["BASH_MAX_TIMEOUT_MS"])
 
 
-def test_the_probe_set_at_its_full_timeouts_takes_1262_seconds():
-    """R-AN-85 "Command time": 4 HTTP probes of 8 s, 8 REST calls of 20 s, 15 git commands of 30 s, and the activity
-    polling, which ends at its first poll from 600 s on (620 s)."""
+def test_the_probe_set_at_its_full_timeouts_takes_1270_seconds():
+    """R-AN-85 "Command time": 5 HTTP probes of 8 s (`net.twelvedata` since §16.18 A9), 8 REST calls of 20 s, 15 git
+    commands of 30 s, and the activity polling, which ends at its first poll from 600 s on (620 s)."""
     assert (len(probes.REST), probes.REST_TIMEOUT_S) == (8, 20)
     assert probes.HTTP_TIMEOUT_S == 8 and probes.GIT_TIMEOUT_S == 30
     assert probes.SEEN_BOUND_S["probe"] == 600 and probes.SEEN_POLL_S == 5
-    assert probe_set_seconds("probe") == 4 * 8 + 8 * 20 + 15 * 30 + 620 == 1262
+    assert probe_set_seconds("probe") == 5 * 8 + 8 * 20 + 15 * 30 + 620 == 1270
 
 
 def test_the_bash_timeout_covers_every_window_command():
@@ -160,16 +160,16 @@ def test_the_bash_timeout_covers_every_window_command():
     # probe: the set, the version, then the result's push retried for 3 minutes (10 s apart), each try at least one
     # push
     probe_s = probe_set_seconds("probe") + cc_version_s + 3 * 60 + 10
-    # a canary context: the hour fetches (no request starts once the 120 s budget is spent; one request of 20 s and
-    # the 1.5 s pacing past it), then the canary probe set (no probe starts after 120 s; the longest, branch_delete
-    # with its 20 s polling bound, takes 80 s)
-    fetch_s = hours.BUDGET_S + hours.TIMEOUT_S + hours.PACE_S
+    # a canary context: the Twelve Data requests (§16.18 A9, R-AN-87: no try starts once the 120 s budget is spent,
+    # the 8 s pacing comes before a try, and a try started just before the end takes 10 s), then the canary probe set
+    # (no probe starts after 120 s; the longest, branch_delete with its 20 s polling bound, takes 80 s)
+    fetch_s = td.BUDGET_S + td.TIMEOUT_S
     assert probe_set_seconds("canary", only="branch_delete") == 80
     context_s = fetch_s + probes.CANARY_BUDGET_S + 80 + cc_version_s
     # lock: the call's push retried until the deadline, at most 30 minutes after the start interval opens
     w = clock.windows_on(dt.date(2026, 10, 26))[0]
     lock_s = (w.deadline_utc - w.start_interval(0)[0]).total_seconds() + 10
     assert lock_s == 30 * 60 + 10
-    assert (round(probe_s), round(context_s), round(lock_s)) == (1462, 352, 1810)
+    assert (round(probe_s), round(context_s), round(lock_s)) == (1470, 340, 1810)
     # every bound, with at least 10 minutes left for the git commands that have no timeout of their own
     assert max(probe_s, context_s, lock_s) + 600 <= t_s

@@ -1,13 +1,25 @@
 # gold-analyst
 
 A pre-registered paper test of an LLM "analyst" for XAU/USD (xauusd-quant `research/analyst/ANALYST_V1_PREREG.md`,
-DRAFT v0.6, and `research/system/IMPLEMENTATION_REGISTER.md` §16 with its amendments §16.18 A6 and A7). It is not
+DRAFT v0.6, and `research/system/IMPLEMENTATION_REGISTER.md` §16 with its amendments §16.18 A6 to A9). It is not
 advice and it never trades. Nobody has shown that the analyst has an edge; the expected result is "not promoted".
 
 ## How it runs
 - Two scheduled Claude Code routines (W1 London, W2 New York) run only the frozen scripts named in
-  `analyst/ROUTINE_PROMPT.md`: `start` pushes an attempt record, `context` builds the context from the mirrored
-  system store and Dukascopy hour files, the agent writes `plan.json`, and `lock` validates it and pushes the call file.
+  `analyst/ROUTINE_PROMPT.md`: `start` pushes an attempt record, `context` builds the context, the agent writes
+  `plan.json`, and `lock` validates it and pushes the call file.
+- The context (`analyst-context/2`, register R-AN-87, §16.18 A9): past days come from the mirrored system store
+  (Dukascopy M1); the model day's hours, P_ref and the five pairs of the dollar proxy come from Twelve Data
+  `time_series` 1h bars in UTC (`analyst/ga/td.py`), plus one 1-minute `fresh` bar that measures how far Twelve Data
+  lags. At most 7 requests a window, 8 s apart from start to start (the plan allows 8 a minute and 800 a day), 10 s
+  a try, 2 tries only after no response or a 5xx, 120 s in all. The requests carry no key: the routines' environment
+  holds one network secret for `api.twelvedata.com`, which Anthropic's agent proxy adds as `Authorization: apikey
+  <key>` outside the session, so the code never sees the key. The context keeps, per request, the URL, the HTTP
+  status, Twelve Data's code, the classification, the body's size and sha256, and the parsed bars it uses, never the
+  response text. An XAUUSD failure while a listed hour is required is `no_call:data` (`td_key`, `td_credits`, ...),
+  with no further request. Levels are shown as Twelve Data gives them, with a fixed `sources` note; settlement, the
+  twins, the tracker and the judge's checks stay on Dukascopy, which the GitHub runners fetch. The Dukascopy version
+  of the session code is kept at the tag `analyst-dukascopy-v0.6` (79b9247, created by the owner before the merge).
 - The routines are attached only to the agent inbox `Mohamedalhaaj/gold-analyst-inbox` (public, GitHub Actions
   disabled, no secret). Its `main` is a fast-forward copy of this repository's main, kept level by
   `analyst-inbox-mirror`; sessions clone it and push only to its `claude/analyst-*` branches. No session can write
@@ -29,7 +41,8 @@ advice and it never trades. Nobody has shown that the analyst has an edge; the e
 - `analyst-track` follows an open paper trade hour by hour for display only; `analyst-deploy` builds and deploys the
   Arabic page `/analyst/` when merge, settle or track dispatch it after a commit (and once a day).
 - `python3 analyst/run_window.py probe` runs the session probes (register R-AN-84) without a window; canary calls run
-  them inside `context`. The record also holds `cc_version`, the session's Claude Code version (the first line of
+  them inside `context`. Since §16.18 A9 `net.twelvedata` (one keyless 1-minute request in `probe`; the context's own
+  first request in a canary, at no extra credit) is the data control, and `net.dukascopy` must be refused. The record also holds `cc_version`, the session's Claude Code version (the first line of
   `claude --version`, as in the attempt and call records); it is not a probe and changes no verdict. C20 passes only
   with 2.1.295 or later, which the hook's `onFailure` requires.
 - The session guard (register R-AN-85, §16.18 A7): `.claude/settings.json` runs `.claude/hooks/guard.py` before every
@@ -57,8 +70,9 @@ advice and it never trades. Nobody has shown that the analyst has an edge; the e
 
 ## Layout
 - `analyst/ga/`: the frozen code (session scripts, probes, context, D_ref, merge, settlement, state). The session uses
-  only the standard library and `analyst/vendor/` (tzdata 2026.3, the lab's `eproc.py`), so the routine network can
-  be `datafeed.dukascopy.com` only with the package managers off.
+  only the standard library and `analyst/vendor/` (tzdata 2026.3, the lab's `eproc.py`), so the routine environment
+  needs no package manager: access level None, no environment variable, no setup script, and the one network secret
+  (`analyst/ROUTINE_CONFIG.template.json`, checked in the export by `tests/test_routine_config.py`).
 - `analyst/FROZEN_ANALYST.sha256`: the frozen set (`python -I analyst/jobs/make_frozen.py`).
 - `.claude/`: the session guard, and nothing else (no CLAUDE.md, AGENTS.md or .mcp.json anywhere). A Claude Code session
   whose project directory is this repository, a local one included, runs under the guard and can do nothing but the

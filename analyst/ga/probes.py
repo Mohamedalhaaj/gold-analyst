@@ -15,13 +15,22 @@ gh); `rest.hooks` gives the length of the hook list instead of `ok`; `activity_s
 first activity answer listing it, or -1. The record keeps only integers, enums and booleans; no remote output text
 is kept or printed. Its one string is `cc_version` (third review of §16.18 A7, decision 22), which the session adds to
 both kinds after the probes (Session.run_probes): its Claude Code version, local output, not a probe, in neither
-`outcomes` nor `pass`. Interpretations (logged for the register): a probe not run in time has outcome null; a canary
-context that fetched no hour file probes Dukascopy with the `probe` GET; probe commits carry head's commit time, so a
-re-run on the same head pushes the same commits.
+`outcomes` nor `pass`. Interpretations (logged for the register): a probe not run in time has outcome null; (until
+§16.18 A9) a canary context that fetched no hour file probed Dukascopy with the `probe` GET; probe commits carry
+head's commit time, so a re-run on the same head pushes the same commits.
 
 Fourth review of §16.18 A6 (R-AN-84, decision 31): the REST write probes pass on `scope` as well as `denied`, and a
 canary `net.dukascopy` whose fetches all gave 0 (an outage or a blocked network: the call is `no_call:data`) has pass
 null, so the call's probe verdict is `incomplete`, not `fail`; `probe` keeps "200".
+
+§16.18 A9 (decisions A9-D11, A9-D12): `net.twelvedata` is the data control and runs first. Its outcome is an int: 200
+iff R-AN-87 classifies the response `ok`, else its td_code, −1 for `invalid` (HTTP 200 and td_code 200 but not `ok`),
+0 for no response. In `probe` it is one try of R-AN-87's `fresh` URL (no key: the agent proxy adds it), and any
+outcome but 200 fails. In a canary `context` it is read from the context's first Twelve Data request (XAUUSD, or
+`fresh` when there is no XAUUSD request) and costs no request; −2 when the context made none; 0, −2, 429 and 500-599
+are null there (an outage or the minute's credits, which the call records as `no_call:data`), and any other outcome
+fails. `net.dukascopy` is now a negative control in both kinds: the GET above, passing iff the outcome is not 200 (the
+environment allows no domain), since contexts no longer fetch Dukascopy; the 0-null rule above is replaced.
 """
 import json
 import os
@@ -29,13 +38,14 @@ import re
 import shutil
 import subprocess
 
-from . import rec
+from . import rec, td
 
 SCHEMA = "analyst-probe/1"
 GA_REPO = "Mohamedalhaaj/gold-analyst"
 GFW_REPO = "Mohamedalhaaj/gold-forward-watch"
 PUBLIC_REPO = "octocat/Hello-World"
 DUKASCOPY_URL = "https://datafeed.dukascopy.com/datafeed/XAUUSD/2026/09/01/10h_ticks.bi5"
+TWELVEDATA_URL = td.FRESH_URL
 GOOGLE_URL = "https://www.google.com"
 RAW_PUBLIC_URL = "https://raw.githubusercontent.com/octocat/Hello-World/master/README"
 API_ROOT_URL = "https://api.github.com/"
@@ -53,7 +63,7 @@ WORKFLOW_YML = (b"name: probe\n"
                 b"    steps:\n"
                 b"      - run: echo probe\n")
 
-ORDER = ("net.dukascopy", "net.google", "net.raw_public", "net.api_root",
+ORDER = ("net.twelvedata", "net.dukascopy", "net.google", "net.raw_public", "net.api_root",
          "rest.inbox", "rest.ga", "rest.gfw", "rest.hooks",
          "git.ls_remote_inbox", "git.ls_remote_gfw", "git.ls_remote_gfw_proxy", "git.ls_remote_public",
          "git.ls_remote_public_proxy",
@@ -172,10 +182,16 @@ def _is_int(v):
 
 def _rule(p, v, kind):
     """R-AN-84's "Pass iff" column for one outcome that is set and not error/none."""
-    if p == "net.dukascopy":                # canary: null when every fetch gave 0 (fourth review of §16.18 A6)
+    if p == "net.twelvedata":               # the data control (§16.18 A9, decision A9-D12)
         if not _is_int(v):
             return False
-        return (True if v != 0 else None) if kind == "canary" else v == 200
+        if v == 200:
+            return True
+        if kind == "canary" and (v in (0, -2, 429) or 500 <= v <= 599):
+            return None
+        return False
+    if p == "net.dukascopy":                # expected refused in both kinds (§16.18 A9)
+        return _is_int(v) and v != 200
     if p == "net.google":
         return _is_int(v) and (v == 0 or not 200 <= v <= 399)
     if p == "net.raw_public":
@@ -274,14 +290,18 @@ class Prober:
             raise ValueError("origin's URL has another form")
         return u
 
-    def _dukascopy(self):
-        if self.kind == "canary" and self.fetched:
-            for f in self.fetched:
-                code = f.get("http") or 0
-                if code != 0:
-                    return int(code)
-            return 0
-        return self._http(DUKASCOPY_URL)
+    def _twelvedata(self):
+        """R-AN-84 `net.twelvedata` (§16.18 A9): a canary reads the context's first Twelve Data request; `probe` makes
+        one try of the `fresh` URL."""
+        if self.kind == "canary":
+            for req in ("XAUUSD", "fresh"):
+                for f in self.fetched:
+                    if f.get("src") == "td" and f.get("req") == req:
+                        return td.prov_outcome(f)
+            return -2
+        code, body = self.http_get(TWELVEDATA_URL, HTTP_TIMEOUT_S)
+        status, reason, tdc, _values = td.classify(int(code or 0), body, "1min")
+        return td.outcome(status, reason, tdc)
 
     def _commits(self):
         """c1 = head's tree on head; c3 = head's tree on head's first parent; c2 = head plus the probe workflow."""
@@ -342,7 +362,8 @@ class Prober:
         except Exception:  # noqa: BLE001
             self.origin = None
         inbox, head, tag = self.inbox, self.head, self.tag
-        self.step("net.dukascopy", self._dukascopy)
+        self.step("net.twelvedata", self._twelvedata)
+        self.step("net.dukascopy", lambda: self._http(DUKASCOPY_URL))
         self.step("net.google", lambda: self._http(GOOGLE_URL))
         self.step("net.raw_public", lambda: self._http(RAW_PUBLIC_URL))
         self.step("net.api_root", lambda: self._http(API_ROOT_URL))
