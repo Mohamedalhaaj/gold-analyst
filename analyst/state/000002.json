@@ -1,0 +1,13 @@
+{
+ "E": null,
+ "K": null,
+ "event": "RESUMED",
+ "head_sha": "a42946c171c14f3597f354c6016266f1bf098976",
+ "model_day": null,
+ "n": null,
+ "reason": "lifted:judge_silent",
+ "run_id": 40484149523,
+ "schema": "analyst-state-event/1",
+ "seq": 2,
+ "utc": "2026-10-27T09:52:58Z"
+}
