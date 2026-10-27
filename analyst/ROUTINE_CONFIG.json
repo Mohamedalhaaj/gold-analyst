@@ -1,7 +1,7 @@
 {
  "schema": "analyst-routine-config/1",
- "exported_utc": "2026-10-26T04:44:30Z",
- "note": "Export after switching on the four routines for the canary (register R-AN-61, §16.18 A6, A7 and A9). raw = the RemoteTrigger update responses that switched analyst-w1, analyst-w2, analyst-lesson and analyst-revision on (2026-10-26 04:41:40Z to 04:41:43Z) and the RemoteTrigger get of analyst-probe (after C20 run 4), with the creator's account fields left out. The updates set only enabled: true; every response shows mcp_connections [] and enabled_plugins [], so no connector or plugin is attached. project: null for every routine; no response has a field whose name contains project, and the routines were created and updated only with RemoteTrigger (created_via http_api), never from a claude.ai project. Prompts are unchanged (prompt_sha256 equal to the previous export). Environment gold-analyst (env_01REwcJo2NSGXn64reopcvds) read in its dialog at claude.ai/code on 2026-10-26 between 04:20Z and 04:43Z: network access None (no allowed domain, so the package-manager list is off), one network secret for api.twelvedata.com (type Bearer, header Authorization, prefix apikey, value pasted by the owner from the macOS keychain item twelvedata-api-key; the list shows no Not sent marker, and C20 run 4 reached Twelve Data with HTTP 200 through it), no setup script, no environment variables. analyst-probe keeps its placeholder yearly cron and stays disabled: it is fired with run-now only.",
+ "exported_utc": "2026-10-27T22:36:26Z",
+ "note": "Export after switching on the four routines for the canary (register R-AN-61, §16.18 A6, A7 and A9). raw = the RemoteTrigger update responses that switched analyst-w1, analyst-w2, analyst-lesson and analyst-revision on (2026-10-26 04:41:40Z to 04:41:43Z) and the RemoteTrigger get of analyst-probe (after C20 run 4), with the creator's account fields left out. The updates set only enabled: true; every response shows mcp_connections [] and enabled_plugins [], so no connector or plugin is attached. project: null for every routine; no response has a field whose name contains project, and the routines were created and updated only with RemoteTrigger (created_via http_api), never from a claude.ai project. Prompts are unchanged (prompt_sha256 equal to the previous export). Environment gold-analyst (env_01REwcJo2NSGXn64reopcvds) read in its dialog at claude.ai/code on 2026-10-26 between 04:20Z and 04:43Z: network access None (no allowed domain, so the package-manager list is off), one network secret for api.twelvedata.com (type Bearer, header Authorization, prefix apikey, value pasted by the owner from the macOS keychain item twelvedata-api-key; the list shows no Not sent marker, and C20 run 4 reached Twelve Data with HTTP 200 through it), no setup script, no environment variables. analyst-probe keeps its placeholder yearly cron and stays disabled: it is fired with run-now only. | Re-export 2026-10-27T22:36:26Z for register §16.18 A14 (R-AN-61): adds analyst-wake, created by the owner through the API at 2026-10-27T17:19:51Z with the same environment, repository, model, tools and prompt as analyst-w1 and no schedule (crons []); claude.ai attached every account connector at creation and the owner cleared them at 17:19:53Z (clear_mcp_connections); the client added its API trigger and token in claude.ai at 22:29:03Z. Its raw is the RemoteTrigger get of about 22:34Z with the creator's account fields left out and api_token_hint replaced (the hint of a live token is not published); mcp_connections [] and enabled_plugins []. The other five entries and the environment block are carried from the 2026-10-26 export unchanged: a RemoteTrigger list at about 22:35Z shows their updated_at unchanged since that export (analyst-w1..revision 2026-10-26T04:41:40Z..04:41:43Z, analyst-probe 2026-10-24) with no connector or plugin, and the environment was not edited since its 2026-10-26 reading. The account's other routines (wake-test, disabled, to be deleted by the client; dukascopy-diagnostic, disabled) run nothing for the analyst.",
  "environment": {
   "name": "gold-analyst",
   "network": {
@@ -312,6 +312,148 @@
    },
    "repo": "Mohamedalhaaj/gold-analyst-inbox",
    "trigger_id": "trig_01RHb8M3VHaSk34Zsw42tQSf"
+  },
+  {
+   "allowed_tools": [
+    "Bash",
+    "Read",
+    "Write"
+   ],
+   "crons": [],
+   "effort": null,
+   "enabled": true,
+   "environment": {
+    "id": "env_01REwcJo2NSGXn64reopcvds",
+    "name": "gold-analyst"
+   },
+   "model": "claude-opus-5-5",
+   "name": "analyst-wake",
+   "network": {
+    "level": "None",
+    "allowed_domains": [],
+    "package_managers": false
+   },
+   "project": null,
+   "prompt_sha256": "62f959195835d02f77761ea65f941d9e435175ae0ebf240ff7f9eda16d96b0fa",
+   "raw": {
+    "api_token_created_at": "2026-10-27T22:29:03.903885Z",
+    "api_token_hint": "(left out: the hint of the live API token is not published)",
+    "created_at": "2026-10-27T17:19:51.038301Z",
+    "created_kind": "ROUTINE_CREATED_KIND_UNSPECIFIED",
+    "created_surface": "ROUTINE_CREATED_SURFACE_UNSPECIFIED",
+    "created_via": "http_api",
+    "cron_expression": "",
+    "derived_state": {
+     "files": [],
+     "folders": [],
+     "folders_state": "FOLDERS_STATE_NONE",
+     "model": "claude-opus-5-5",
+     "prompt": "Follow the section CALL of analyst/ROUTINE_PROMPT.md exactly."
+    },
+    "enabled": true,
+    "enabled_plugins": [],
+    "ended_reason": "",
+    "extra_marketplaces": [],
+    "id": "trig_01STf8G81pfuAst2WBNZ6Nbw",
+    "job_config": {
+     "ccr": {
+      "environment_id": "env_01REwcJo2NSGXn64reopcvds",
+      "events": [
+       {
+        "data": {
+         "message": {
+          "content": "Follow the section CALL of analyst/ROUTINE_PROMPT.md exactly.",
+          "role": "user"
+         },
+         "parent_tool_use_id": null,
+         "session_id": "",
+         "type": "user",
+         "uuid": "394207ad-0507-4949-ad1a-88d96aa5a580"
+        }
+       }
+      ],
+      "session_context": {
+       "allowed_tools": [
+        "Bash",
+        "Read",
+        "Write"
+       ],
+       "model": "claude-opus-5-5",
+       "sources": [
+        {
+         "git_repository": {
+          "url": "https://github.com/Mohamedalhaaj/gold-analyst-inbox"
+         }
+        }
+       ]
+      }
+     }
+    },
+    "mcp_connections": [],
+    "name": "analyst-wake",
+    "persist_session": false,
+    "session_request": {
+     "config": {
+      "account_plugins": [],
+      "account_skills": [],
+      "active_mount_paths": [],
+      "allowed_tools": [
+       "Bash",
+       "Read",
+       "Write"
+      ],
+      "auto_mode_allow": [],
+      "auto_mode_environment": [],
+      "auto_mode_soft_deny": [],
+      "builtin_tools": [],
+      "disallowed_tools": [],
+      "file_mounts": [],
+      "mcp_servers": [],
+      "metadata": {},
+      "model": "claude-opus-5-5",
+      "otel_content_capture": [],
+      "outcomes": [],
+      "owner_tagged_mcp_servers": [],
+      "prompt_cache_relay_enabled": false,
+      "sources": [
+       {
+        "sparse_checkout_exclude_patterns": [],
+        "sparse_checkout_paths": [],
+        "type": "git_repository",
+        "url": "https://github.com/Mohamedalhaaj/gold-analyst-inbox"
+       }
+      ],
+      "subagents": [],
+      "worktree": false
+     },
+     "environment_id": "env_01REwcJo2NSGXn64reopcvds",
+     "environment_variables": {},
+     "events": [
+      {
+       "ephemeral": false,
+       "historical": false,
+       "mentioned_account_ids": [],
+       "payload": {
+        "message": {
+         "content": "Follow the section CALL of analyst/ROUTINE_PROMPT.md exactly.",
+         "role": "user"
+        },
+        "parent_tool_use_id": null,
+        "session_id": "",
+        "type": "user",
+        "uuid": "394207ad-0507-4949-ad1a-88d96aa5a580"
+       },
+       "user_declared_urls": []
+      }
+     ],
+     "metadata": {},
+     "tags": []
+    },
+    "suspension_reason": "",
+    "updated_at": "2026-10-27T22:29:03.954832Z"
+   },
+   "repo": "Mohamedalhaaj/gold-analyst-inbox",
+   "trigger_id": "trig_01STf8G81pfuAst2WBNZ6Nbw"
   },
   {
    "allowed_tools": [
