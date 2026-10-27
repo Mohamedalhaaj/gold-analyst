@@ -15,7 +15,7 @@ pauses `judge_silent` (R-AN-55, R-AN-70)."""
 import json
 import urllib.request
 
-from . import clock, merge, paths, rec, settle, state, store
+from . import clock, hours, merge, paths, rec, settle, state, store
 from .merge import Merge
 
 SETTLE_WRITE_PREFIXES = merge.ALLOWED_WRITE_PREFIXES + ("analyst/settled/", "analyst/twins/", "analyst/state/",
@@ -30,7 +30,10 @@ def fetch_verdict(pins, timeout=20):
     if not base:
         return None
     try:
-        with urllib.request.urlopen(base.rstrip("/") + "/judge_analyst/analyst_verdict.json", timeout=timeout) as r:
+        # §16.18 A13: the judge's site refuses Python's default agent (Cloudflare 1010), so send the package's own
+        req = urllib.request.Request(base.rstrip("/") + "/judge_analyst/analyst_verdict.json",
+                                     headers={"User-Agent": hours.UA})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             doc = json.loads(r.read().decode("utf-8"))
         if doc.get("schema") != "analyst-verdict/1" or doc.get("analyst_verdict") not in ("SOUND", "WARNING",
                                                                                            "VIOLATION"):
