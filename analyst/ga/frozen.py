@@ -9,6 +9,8 @@ code_sha8 = the first 8 hex of sha256(manifest bytes). Display code (analyst/dis
 §16.18 A12-D19: the live macro calendar (DATA_FILES) is data, refreshed by appending issuer-published rows (a logged
 data update, analyst/ops_changes.csv), so it is outside the manifest; the judge checks it at each call's
 repo_head_sha instead (append-only against the A12 build commit's file).
+§16.18 A14 (R-AN-91, R-AN-2): the watcher's code, `watcher/**` (worker.js, wrangler.toml, tests), is frozen with the
+analyst; wrangler's git-ignored `.wrangler/` state and any `node_modules/` are never part of the set.
 """
 import hashlib
 from pathlib import Path
@@ -18,8 +20,8 @@ FILES = ("analyst/ROUTINE_PROMPT.md", "analyst/exam/ROUTINE_PROMPT.md", "analyst
          "analyst/run_window.py", "analyst/playbooks/v0.md", "analyst/PARAMS.json",
          "analyst/tests/fixtures/canary_settled.json", "analyst/PROBE_SESSION_PROMPT.md", ".claude/settings.json",
          ".claude/hooks/guard.py")
-TREES = ("analyst/ga/", "analyst/vendor/", "analyst/tables/", "analyst/calendars/")
-SKIP_PARTS = ("__pycache__",)
+TREES = ("analyst/ga/", "analyst/vendor/", "analyst/tables/", "analyst/calendars/", "watcher/")
+SKIP_PARTS = ("__pycache__", ".wrangler", "node_modules")
 DATA_FILES = ("analyst/calendars/macro_2026_2027.csv",)
 
 

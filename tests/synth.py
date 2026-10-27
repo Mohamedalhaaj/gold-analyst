@@ -129,9 +129,12 @@ def repo_files(extra=None):
     return files
 
 
-def mode_json(mode="canary", canary_from="2026-10-19", canary_to=None, live_from=None):
-    return json.dumps({"mode": mode, "canary_from": canary_from, "canary_to": canary_to, "live_from": live_from,
-                       "set_utc": "2026-10-01T00:00:00Z", "note": "test"}).encode()
+def mode_json(mode="canary", canary_from="2026-10-19", canary_to=None, live_from=None, a14_from=None):
+    doc = {"mode": mode, "canary_from": canary_from, "canary_to": canary_to, "live_from": live_from,
+           "set_utc": "2026-10-01T00:00:00Z", "note": "test"}
+    if a14_from:
+        doc["a14_from"] = a14_from
+    return json.dumps(doc).encode()
 
 
 # ---------------------------------------------------------------- fake HTTP for hour files
@@ -203,11 +206,18 @@ class FakeTD:
     60 s). Records requests. `absent` = {(sym, hour)}; `responses` = {symbol | "fresh": (http, body) or a list of
     them, served in order and the last one repeated}; `delay_s` = seconds each request takes on `clk`."""
 
-    def __init__(self, now=None, fn=price_path, absent=(), responses=None, fresh_lag_s=60, clk=None, delay_s=0.0):
+    def __init__(self, now=None, fn=price_path, absent=(), responses=None, fresh_lag_s=60, clk=None, delay_s=0.0,
+                 m30=None):
+        self.m30 = m30 or self.m30_default         # §16.18 A14: XAU/USD 30-minute bars, t -> (o, h, l, c) or None
         self.now, self.fn, self.absent = now, fn, set(absent)
         self.responses = {k: (list(v) if isinstance(v, list) else [v]) for k, v in (responses or {}).items()}
         self.fresh_lag_s, self.clk, self.delay_s = fresh_lag_s, clk, delay_s
         self.requests = []
+
+    def m30_default(self, t):
+        base = int(t.timestamp())
+        o, c = self.fn(base) / 1000.0, self.fn(base + 1799) / 1000.0
+        return round(o, 5), round(max(o, c) + 0.5, 5), round(min(o, c) - 0.5, 5), round(c, 5)
 
     def bar(self, sym, hour):
         base = int(hour.timestamp())
@@ -236,6 +246,15 @@ class FakeTD:
         sym = TD_SYMS[q["symbol"]]
         a = dt.datetime.strptime(q["start_date"], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=UTC)
         b = dt.datetime.strptime(q["end_date"], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=UTC)
+        if q.get("interval") == "30min":
+            out, t = [], a
+            while t <= b:
+                m = clock.to_server(t)
+                v = self.m30(t) if (m.weekday() < 5 and m.hour >= 1) else None
+                if v is not None:
+                    out.append((t.strftime("%Y-%m-%d %H:%M:%S"),) + tuple(v))
+                t += dt.timedelta(minutes=30)
+            return 200, td_body(out)
         out = []
         h = a
         while h <= b:

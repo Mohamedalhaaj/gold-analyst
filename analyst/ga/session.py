@@ -12,6 +12,13 @@ pushes on a schedule. No step waits for a witness: an attempt branch in the inbo
 names, and that this session did not push itself, is a draw in progress (R-AN-24, `concurrent`). Exit codes: 0 done
 or a clean refusal, 1 a technical failure, 2 an invalid plan/lesson/playbook that the agent may fix and lock again;
 `probe`: 0 pass, 4 fail, 5 incomplete, 1 a technical failure.
+
+§16.18 A14 (R-AN-90): for model days >= MODE.json a14_from, `start` selects the window by the clock (W1 or W2, else
+W1b or W2b, else the trigger candidate of the current check), keeps R-AN-24's refusals first, then gates a first
+draw by `trade_open` and `day_cap` (R-AN-89 steps 1-2, read from origin/main and the inbox's unmerged attempt and
+call branches of the model day), and for a trigger candidate makes the XAUUSD_M30 request at or after T + 130 s
+(`wake_data`) and recomputes R(T) from it (`not_triggered`). The attempt record carries `wake`; a second draw copies
+it from its first attempt record and is not gated again.
 """
 import datetime as dt
 import json
@@ -20,12 +27,23 @@ import re
 import time
 from pathlib import Path
 
-from . import clock, context, gitops, memory, paths, plan, probes, rec, records, tables, td, witness
+from . import clock, context, gitops, memory, paths, plan, probes, rec, records, tables, td, wake, witness
 from .repo import GitView
 
 WORK_DIRNAME = ".analyst_run"
 MAX_FAILURES = 3
 PROBE_EXIT = {"pass": 0, "fail": 4, "incomplete": 5}
+
+
+def _loads_or_none(b):
+    try:
+        return rec.loads(b)
+    except ValueError:
+        return None
+
+
+class DayReadFailed(Exception):
+    """The model day's attempt, call or terminal files could not be read (R-AN-90): a technical failure."""
 
 
 class Refusal(Exception):
@@ -125,7 +143,7 @@ class Session:
                 return False
             self.sleep(10)
 
-    # ------------------------------------------------------------ start (R-AN-24)
+    # ------------------------------------------------------------ start (R-AN-24, R-AN-90)
     def start(self):
         now = self.now()
         head = self.git.fetch_main()
@@ -133,38 +151,59 @@ class Session:
         mode_doc = paths.read_mode(view)
         mode = mode_doc["mode"]
         params = paths.read_params(view)
+        self._td_last = None
         try:
-            w, n = self._start_checks(view, mode_doc, params, now)
+            w, n, wake_doc = self._start_checks(view, mode_doc, params, now)
         except Refusal as r:
             self.out(f"refused {r.code}")
             return 0
+        except DayReadFailed:
+            self.out("error day_read")
+            return 1
         except gitops.GitError:
             self.out("error inbox_branches")
             return 1
         frozen = records.frozen_block(view)
-        doc = records.attempt("call", mode, w.call_id, n, w.call_id, head, frozen, self._selfrep("started_utc"))
+        doc = records.attempt("call", mode, w.call_id, n, w.call_id, head, frozen, self._selfrep("started_utc"),
+                              wake=wake_doc)
         path = paths.attempt_path(mode, w.call_id, n)
         head2 = self.git.fetch_main()
         if witness.has_terminal(self.view_factory(head2), mode, w.call_id):
             self.out("refused closed")
             return 0
         st = {"kind": "call", "mode": mode, "call_id": w.call_id, "n": n, "attempt_path": path,
-              "repo_head_sha_start": head}
+              "repo_head_sha_start": head, "wake": wake_doc,
+              "td_last_start_mono": self._td_last}
         self._save_state(st)
         ok = self._push(head, path, rec.record_bytes(doc), f"claude/analyst-{mode}-attempt-{w.call_id}-{n}",
-                        min(w.deadline_utc, now + dt.timedelta(minutes=3)), st, "attempt_commit")
+                        min(w.deadline_utc, self.now() + dt.timedelta(minutes=3)), st, "attempt_commit")
         if not ok:
             self.out("error attempt_push")
             return 1
         self.out(f"attempt_pushed {w.call_id} n={n} mode={mode}")
         return 0
 
+    def _select(self, mode_doc, params, now):
+        """R-AN-90's window selection (R-AN-24's for days before a14_from): the W1 or W2 whose start interval
+        contains now, else the W1b or W2b, else the trigger candidate of check T = now floored to the half hour."""
+        t_run = int(params["T_run_min"])
+        for w in clock.windows_on(now.date()):
+            if w.in_start_interval(now, t_run):
+                return w
+        if paths.a14_applies(mode_doc, now.date()):
+            for w in clock.windows_on(now.date(), a14=True):
+                if w.name in clock.SECOND_LOOKS and w.in_start_interval(now, t_run):
+                    return w
+        T = clock.floor_half_hour(now)
+        d = clock.tday(T)
+        if paths.a14_applies(mode_doc, d) and T in clock.check_grid(d) and T not in clock.scheduled_checks(d) \
+                and now <= T + dt.timedelta(minutes=15 - t_run):
+            return clock.Window(d, clock.trigger_tag(T))
+        raise Refusal("outside_span")
+
     def _start_checks(self, view, mode_doc, params, now):
         mode = mode_doc["mode"]
-        cands = [w for w in clock.windows_on(now.date()) if w.in_start_interval(now, int(params["T_run_min"]))]
-        if not cands:
-            raise Refusal("outside_span")
-        w = cands[0]
+        w = self._select(mode_doc, params, now)
         if mode == "off":
             raise Refusal("mode_off")
         hol = tables.load_holidays(view)
@@ -188,7 +227,90 @@ class Session:
             raise Refusal("concurrent")
         if self.in_flight(view, mode, w.call_id):
             raise Refusal("concurrent")
-        return w, len(acc) + 1
+        n = len(acc) + 1
+        if n == 2:                                   # not gated again; keeps its first draw's wake (R-AN-90)
+            first = view.read_json(paths.attempt_path(mode, w.call_id, 1)) or {}
+            return w, n, first["wake"] if isinstance(first.get("wake"), dict) else records.wake_of(w)
+        if not paths.a14_applies(mode_doc, w.day):
+            return w, n, records.wake_of(w)
+        wakes, trades = self.day_windows(view, mode, w.day)
+        T = w.check_utc
+        if wake.open_trades(trades, T):
+            raise Refusal("trade_open")
+        if len(wake.earlier(wakes, T)) >= wake.DAY_CAP:
+            raise Refusal("day_cap")
+        if w.kind != "trigger":
+            return w, n, records.wake_of(w)
+        prov, bars = self._wake_request(T)
+        if prov["status"] != "ok":
+            raise Refusal(f"wake_data td_{prov['reason']}")
+        r = wake.rule(w.day, T, bars, wakes, trades, hol.any_row(w.day))
+        if r["result"] != "window" or r["tag"] != w.tag:
+            raise Refusal("not_triggered")
+        return w, n, records.wake_of(w, r["reason"], prov)
+
+    def _wake_request(self, T):
+        """The XAUUSD_M30 request of a trigger candidate's first draw (R-AN-90), made at or after T + 130 s, from
+        22:00 UTC of the calendar day d − 33 days to T; its `bars` hold every element with t_utc <= T − 30 min."""
+        wait = (T + dt.timedelta(seconds=130) - self.now()).total_seconds()
+        if wait > 0:
+            self.sleep(wait)
+        d = clock.tday(T)
+        a0 = d - dt.timedelta(days=33)
+        a = dt.datetime(a0.year, a0.month, a0.day, 22, tzinfo=rec.UTC)
+        fetcher = td.Fetcher(get=self.http_get, clock=self.mono, sleep=self.sleep, now=self.now)
+        prov, values = fetcher.fetch(records.WAKE_REQ, td.m30_url(a, T), "30min")
+        self._td_last = fetcher.last_start
+        bars = wake.used_bars(values, T)
+        prov["bars"] = [td.bar_obj(v) for v in bars]
+        return prov, bars
+
+    def day_windows(self, view, mode, d):
+        """The model day's windows for E(T) and O(T) (R-AN-89, R-AN-90): ([{call_id, check_utc, kind, reason}] of
+        the windows with an attempt, [{call_id, check_utc, exit_utc}] of those whose call is a buy or a sell). Read
+        from origin/main and from the inbox's attempt and call branches of d whose file is not on main; a failed read
+        raises DayReadFailed."""
+        P = paths.prefix(mode)
+        day = d.isoformat()
+        att_rx = re.compile(rf"(?P<cid>{day}_(?:{clock.TAG_RE}))_(?P<n>[12])\.json")
+        cid_rx = re.compile(rf"(?P<cid>{day}_(?:{clock.TAG_RE}))\.json")
+        att, calls, terms = {}, {}, {}
+        for p in view.list(f"{P}attempts/{day}_"):
+            m = att_rx.fullmatch(p[len(P) + len("attempts/"):])
+            if m:
+                att[(m["cid"], int(m["n"]))] = view.read_json(p)
+        for sub, out in (("calls/", calls), ("terminal/", terms)):
+            for p in view.list(f"{P}{sub}{day}_"):
+                m = cid_rx.fullmatch(p[len(P) + len(sub):])
+                if m:
+                    out[m["cid"]] = view.read_json(p)
+        try:
+            base = f"refs/heads/claude/analyst-{mode}-"
+            for _sha, ref in self.git.ls_remote_heads(f"{base}attempt-{day}_*"):
+                m = re.fullmatch(rf"{re.escape(base)}attempt-(?P<cid>{day}_(?:{clock.TAG_RE}))-(?P<n>[12])", ref)
+                if m and (m["cid"], int(m["n"])) not in att:
+                    att[(m["cid"], int(m["n"]))] = _loads_or_none(
+                        self.git.ref_file(ref, paths.attempt_path(mode, m["cid"], int(m["n"]))))
+            for _sha, ref in self.git.ls_remote_heads(f"{base}call-{day}_*"):
+                m = re.fullmatch(rf"{re.escape(base)}call-(?P<cid>{day}_(?:{clock.TAG_RE}))", ref)
+                if m and m["cid"] not in calls:
+                    calls[m["cid"]] = _loads_or_none(self.git.ref_file(ref, paths.call_path(mode, m["cid"])))
+        except gitops.GitError as e:
+            raise DayReadFailed() from e
+        wakes = []
+        for cid in sorted({c for c, _n in att}, key=clock.window_key):
+            w = clock.window_of(cid)
+            docs = [att[k] for k in sorted(att) if k[0] == cid]
+            reason = next((x["wake"].get("reason") for x in docs
+                           if isinstance(x, dict) and isinstance(x.get("wake"), dict)), None)
+            wakes.append({"call_id": cid, "check_utc": w.check_utc, "kind": w.kind, "reason": reason})
+        trades = []
+        for cid in sorted(set(calls) | set(terms), key=clock.window_key):
+            doc = terms.get(cid) if cid in terms else calls.get(cid)
+            if isinstance(doc, dict) and doc.get("status") == "called":
+                w = clock.window_of(cid)
+                trades.append({"call_id": cid, "check_utc": w.check_utc, "exit_utc": w.exit_utc})
+        return wakes, trades
 
     # ------------------------------------------------------------ context (R-AN-14..R-AN-23)
     def context(self):
@@ -205,8 +327,12 @@ class Session:
             return 0
         w = clock.window_of(st["call_id"])
         params = paths.read_params(view)
+        if st.get("td_last_start_mono") is not None:   # 8.0 s after the start's request's last try (R-AN-90)
+            wait = min(td.PACE_S, float(st["td_last_start_mono"]) + td.PACE_S - self.mono())
+            if wait > 0:
+                self.sleep(wait)
         fetcher = td.Fetcher(get=self.http_get, clock=self.mono, sleep=self.sleep, now=self.now)
-        ctx = context.build(view, head, mode, w, asof, params, fetcher)
+        ctx = context.build(view, head, mode, w, asof, params, fetcher, wake=st.get("wake") or records.wake_of(w))
         sha = context.context_sha256(ctx)
         st.update(context_sha256=sha, repo_head_sha=head, failures=0)
         self.work.mkdir(parents=True, exist_ok=True)

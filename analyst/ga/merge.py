@@ -43,6 +43,17 @@ After the fourth review of §16.18 A6 (N1), time budgets bound what one push can
   completion of a comment starts; the run logs `run_budget <count left>`, skips steps 2 and 3 of the closer and
   commits what it wrote. The next run goes on; analyst-settle still settles and applies the pause rule.
 So one push costs at most 2 x 240 + 2 x 130 + 60 = 800 s before its witness; the jobs' timeout is 45 minutes.
+
+§16.18 A14 (R-AN-11, R-AN-25, R-AN-33, R-AN-36, R-AN-37, R-AN-39): call_ids also name W1b, W2b and T<hhmm> windows;
+such a path is `invalid_content` before MODE.json a14_from (or with it null), or when T<hhmm> is not in G(d) or is a
+scheduled check. For model days >= a14_from the expected windows are W1, W2, W1b, W2b and every trigger window with
+an accepted attempt witness, in window order (model_day, entry_utc). An attempt or a call of a trigger window
+without an accepted attempt witness while a later window of its mode has a terminal is rejected `window_order`. A
+call attempt of `analyst-attempt/2` must carry a well-formed `wake` (records.valid_wake). The closer's step 2 adds
+`skipped:trade_open` and `skipped:day_cap` (W1, W2, W1b, W2b). Interpretation (logged for the register): the
+windows of a mode are closed strictly in window order, so an expected window whose deadline + 20 min has not passed
+holds the closing of the mode's later windows (their accepted calls included) until it is due; windows 30 minutes
+apart then never close a window inside its grace through the chain.
 """
 import datetime as dt
 import re
@@ -60,7 +71,7 @@ REVISION_SCHEMA = "analyst-revision/1"
 ZERO40 = "0" * 40
 BOT = "github-actions[bot]"
 GRACE = dt.timedelta(minutes=20)
-CID = r"[0-9]{4}-[0-9]{2}-[0-9]{2}_W[12]"
+CID = r"[0-9]{4}-[0-9]{2}-[0-9]{2}_(?:W[12]b?|T(?:[01][0-9]|2[0-3])(?:00|30))"
 HEADER_RE = re.compile(r"^analyst-witness/1 (\S+) (\S+) seq ([0-9]+)$")
 ANALYST_REF = "refs/heads/claude/analyst-"
 SHA_RE = re.compile(r"[0-9a-f]{40}")
@@ -80,7 +91,8 @@ MAX_BLOB = 4 * 1024 * 1024           # an allowed blob above this is agent_scope
 NO_AUTH = ("-c", "http.https://github.com/.extraheader=")   # drops the token actions/checkout persisted
 PROTO_V2 = ("-c", "protocol.version=2")   # the server then lists only the ref asked for: no branch flood in the answer
 TERMINAL_STATUSES = ("called", "stay_out", "no_call:refusal", "no_call:invalid", "no_call:data", "no_call:d_ref",
-                     "no_call:late", "no_call:run", "missed:trigger", "missed:push", "skipped:holiday")
+                     "no_call:late", "no_call:run", "missed:trigger", "missed:push", "skipped:holiday",
+                     "skipped:trade_open", "skipped:day_cap")
 
 
 class InboxUnavailable(Exception):
@@ -139,16 +151,47 @@ def names_a_window(ident):
     return clock.is_weekday(d)
 
 
-def expected_windows(mode_doc, mode, until):
-    """The expected windows of `mode` with model day <= until, in window order."""
+def trigger_windows(mode_doc, mode, view):
+    """{model_day: {call_id: Window}} of the trigger windows of `mode` with an accepted attempt witness, for model
+    days >= a14_from (R-AN-11)."""
+    out = {}
+    if view is None or paths.a14_from(mode_doc) is None:
+        return out
+    for x in witness.witnesses(view, mode):
+        if x.get("kind") != "attempt" or x.get("status") != "accepted":
+            continue
+        try:
+            w = clock.window_of(x.get("id") or "")
+        except ValueError:
+            continue
+        if w.kind == "trigger" and paths.a14_applies(mode_doc, w.day):
+            out.setdefault(w.day, {})[w.call_id] = w
+    return out
+
+
+def expected_windows(mode_doc, mode, until, view=None):
+    """The expected windows of `mode` with model day <= until, in window order: W1 and W2; for model days >=
+    a14_from also W1b, W2b and, given a view, every trigger window with an accepted attempt witness (R-AN-11)."""
     _m, a, b = paths.mode_period(mode_doc, mode)
     if a is None:
         return []
     last = until if b is None else min(b, until)
+    trig = trigger_windows(mode_doc, mode, view)
     out = []
     for d in clock.days_range(a, last):
-        out.extend(clock.windows_on(d))
+        ws = clock.windows_on(d, paths.a14_applies(mode_doc, d)) + list(trig.get(d, {}).values())
+        out.extend(sorted(ws, key=lambda w: w.entry_utc))
     return out
+
+
+def a14_window_ok(mode_doc, w):
+    """False for a W1b, W2b or T<hhmm> window before a14_from (or with it null), and for a T<hhmm> that is not in
+    G(d) or is a scheduled check (R-AN-33)."""
+    if w.name in clock.WINDOWS:
+        return True
+    if not paths.a14_applies(mode_doc, w.day):
+        return False
+    return w.kind != "trigger" or clock.valid_trigger(w.day, w.tag)
 
 
 class Workspace:
@@ -566,7 +609,7 @@ class Merge:
 
     # ------------------------------------------------------------ chain and terminal (R-AN-36, R-AN-37)
     def prev_chain(self, mode, w):
-        exp = expected_windows(self.mode_doc, mode, w.day)
+        exp = expected_windows(self.mode_doc, mode, w.day, self.view)
         keys = [x.key() for x in exp]
         if w.key() not in keys:
             return rec.ZERO64
@@ -657,16 +700,35 @@ class Merge:
 
     def chain_block(self, mode, w):
         """The first window before w (mode, window order) with no terminal, no accepted call and outside the push
-        range: w's terminal would chain through it (R-AN-37), so it waits. None when the chain is clear."""
-        exp = expected_windows(self.mode_doc, mode, w.day)
+        range, or not yet past its deadline + 20 min (§16.18 A14: windows can be 30 minutes apart): w's terminal
+        would chain through it (R-AN-37), so it waits. None when the chain is clear."""
+        exp = expected_windows(self.mode_doc, mode, w.day, self.view)
         keys = [x.key() for x in exp]
         if w.key() not in keys:
             return None
         for x in exp[:keys.index(w.key())]:
-            if not self.view.exists(paths.terminal_path(mode, x.call_id)) and not self.covered(x) \
-                    and self.accepted_call(mode, x.call_id) is None:
+            if not self.view.exists(paths.terminal_path(mode, x.call_id)) \
+                    and self.accepted_call(mode, x.call_id) is None \
+                    and (not self.covered(x) or self.now() < x.deadline_utc + GRACE):
                 return x
         return None
+
+    def later_closed(self, mode, w):
+        """True when a window after w (window order) of `mode` has a terminal record (R-AN-11, `window_order`)."""
+        tp = f"{paths.prefix(mode)}terminal/"
+        for p in self.view.list(tp):
+            try:
+                x = clock.window_of(p[len(tp):-len(".json")])
+            except ValueError:
+                continue
+            if x.key() > w.key():
+                return True
+        return False
+
+    def earlier_of_day(self, mode, w):
+        """The expected windows of w's model day before w, in window order."""
+        return [x for x in expected_windows(self.mode_doc, mode, w.day, self.view)
+                if x.day == w.day and x.key() < w.key()]
 
     def close_window(self, mode, w):
         if self.view.exists(paths.terminal_path(mode, w.call_id)):
@@ -684,7 +746,28 @@ class Merge:
         elif self.attempts_of(mode, w.call_id):
             self.write_terminal(mode, w, "no_call:run", None, "closer")
         else:
-            self.write_terminal(mode, w, "missed:trigger", self.refusal_detail(w), "closer")
+            skip = self._skip_status(mode, w) if paths.a14_applies(self.mode_doc, w.day) else None
+            if skip:
+                self.write_terminal(mode, w, skip[0], skip[1], "closer")
+            else:
+                self.write_terminal(mode, w, "missed:trigger", self.refusal_detail(w), "closer")
+
+    def _skip_status(self, mode, w):
+        """R-AN-39 step 2 (§16.18 A14), for a W1, W2, W1b or W2b window without an attempt: (`skipped:trade_open`,
+        the open trade's call_id) when an earlier window of its day has terminal `called` and an exit_utc later
+        than w's entry_utc; else (`skipped:day_cap`, the count) when 6 or more earlier windows of its day have an
+        accepted attempt; else None."""
+        if w.kind == "trigger":
+            return None
+        earlier = self.earlier_of_day(mode, w)
+        for x in earlier:
+            t = self.view.read_json(paths.terminal_path(mode, x.call_id)) or {}
+            if t.get("status") == "called" and x.exit_utc > w.entry_utc:
+                return "skipped:trade_open", x.call_id
+        n = sum(1 for x in earlier if witness.accepted_attempts(self.view, mode, x.call_id))
+        if n >= 6:
+            return "skipped:day_cap", str(n)
+        return None
 
     def closer(self):
         now = self.now()
@@ -708,12 +791,12 @@ class Merge:
         #    past deadline + 20 min is closed if the push range covers it; the first one it does not cover stays
         #    open (`stale_window`), and so do the mode's later windows, whose chain runs through it (SEC-3).
         for mode in self.closing_modes():
-            for w in expected_windows(self.mode_doc, mode, now.date()):
+            for w in expected_windows(self.mode_doc, mode, clock.tday(now), self.view):
                 if self.view.exists(paths.terminal_path(mode, w.call_id)):
                     continue
                 if self.accepted_call(mode, w.call_id) is None:
                     if now < w.deadline_utc + GRACE:
-                        continue
+                        break                     # strict window order: later windows wait (§16.18 A14)
                     if not self.covered(w):
                         self.log(f"stale_window {w.call_id}")
                         break
@@ -889,8 +972,12 @@ class Merge:
             if doc["kind"] != "call" or doc["call_id"] != draw:
                 return self.reject(mode, "attempt", draw, "invalid_content", path, push)
             w = clock.window_of(draw)
+            if not a14_window_ok(self.mode_doc, w):
+                return self.reject(mode, "attempt", draw, "invalid_content", path, push)
             if not self._in_period(mode, w.day):
                 return self.reject(mode, "attempt", draw, "mode", path, push)
+            if w.kind == "trigger" and not acc and self.later_closed(mode, w):
+                return self.reject(mode, "attempt", draw, "window_order", path, push)
             window = {"entry_utc": rec.iso(w.entry_utc), "deadline_utc": rec.iso(w.deadline_utc),
                       "time_utc": t_utc, "time_source": t_src,
                       "void": t_utc < rec.iso(w.span_start_utc) or t_utc > rec.iso(w.deadline_utc)}
@@ -914,8 +1001,13 @@ class Merge:
         if not records.valid_call(doc) or doc["call_id"] != cid or doc["mode"] != mode:
             return self.reject(mode, "call", cid, "invalid_content", path, push)
         w = clock.window_of(cid)
+        if not a14_window_ok(self.mode_doc, w):
+            return self.reject(mode, "call", cid, "invalid_content", path, push)
         if not self._in_period(mode, w.day):
             return self.reject(mode, "call", cid, "mode", path, push)
+        if w.kind == "trigger" and not witness.accepted_attempts(self.view, mode, cid) \
+                and self.later_closed(mode, w):
+            return self.reject(mode, "call", cid, "window_order", path, push)
         window = {"entry_utc": rec.iso(w.entry_utc), "deadline_utc": rec.iso(w.deadline_utc), "time_utc": t_utc,
                   "time_source": t_src, "void": False}
         if self.view.exists(paths.terminal_path(mode, cid)):

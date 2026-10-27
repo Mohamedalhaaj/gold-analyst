@@ -5,7 +5,7 @@ GitHub API whose inbox activity entries carry the server times the tests choose,
 import datetime as dt
 import json
 
-from ga import clock, gitops, merge, rec, store
+from ga import clock, context, gitops, merge, rec, store
 from ga.session import Session
 from synth import (INBOX_REPO, FakeAPI, FakeClock, FakeGH, FakeTD, World, default_slots, git, mode_json,
                    repo_files, store_files)
@@ -22,16 +22,19 @@ def pins_with(files, **kw):
 
 class Harness:
     def __init__(self, tmp, mode="canary", canary_from="2026-11-10", live_from=None, store_last=dt.date(2026, 11, 9),
-                 extra=None, slots_until=dt.date(2026, 11, 20), inbox_from_utc=INBOX_FROM):
-        files = repo_files({"analyst/MODE.json": mode_json(mode, canary_from=canary_from, live_from=live_from)})
+                 extra=None, slots_until=dt.date(2026, 11, 20), inbox_from_utc=INBOX_FROM, a14_from=None, m30=None):
+        files = repo_files({"analyst/MODE.json": mode_json(mode, canary_from=canary_from, live_from=live_from,
+                                                           a14_from=a14_from)})
         files["analyst/PINS.json"] = pins_with(files, inbox_from_utc=inbox_from_utc)
         files.update(store_files(clock.days_range(dt.date(2026, 9, 1), store_last)))
         files[store.SLOTS_PATH] = default_slots(slots_until).encode()
+        # §16.18 A14 (R-AN-12 step 3b, R-AN-21): the whole forecast store, every slot; slots 9, 10, 15 as above
+        files[context.FORECASTS_PATH] = default_slots(slots_until, slots=tuple(range(20))).encode()
         files.update(extra or {})
         self.world = World(tmp, files, protect_main=True, inbox=True)
         self.t = [dt.datetime(2026, 11, 10, 7, 20, tzinfo=UTC)]
         self.api = FakeAPI(self.now)
-        self.feed = FakeTD(now=self.now)                # Twelve Data (register R-AN-87, §16.18 A9)
+        self.feed = FakeTD(now=self.now, m30=m30)       # Twelve Data (register R-AN-87, §16.18 A9, A14)
         self.clk = FakeClock()
         self.log = []
         self.merge_log = []

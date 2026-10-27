@@ -178,7 +178,7 @@ def test_stay_out_reason_is_checked_at_the_lock(tmp_path):
     assert h.log[-1] == "locked 2026-11-10_W1 status=stay_out"
     h.push_and_merge()
     call = h.main_json(CANARY_CALL)
-    assert call["context"]["schema"] == "analyst-context/3" and call["plan"]["stay_out_reason"] == "mid_range"
+    assert call["context"]["schema"] == "analyst-context/4" and call["plan"]["stay_out_reason"] == "mid_range"
     assert call["status"] == "stay_out" and call["side"] == 0 and call["lock_validation_failures"] == 2
     assert h.main_json("analyst/canary/terminal/2026-11-10_W1.json")["status"] == "stay_out"
 

@@ -89,14 +89,18 @@ def model_overlays(view):
             continue
         call = view.read_json(paths.call_path("live", cid)) or {}
         sid = (call.get("self_reported") or {}).get("session_id")
-        routine = "analyst-w1" if cid.endswith("W1") else "analyst-w2"
-        cand = [r for r in runs if r.get("routine") == routine]
+        w = clock.window_of(cid)
+        if w.name in clock.WINDOWS:
+            routines = ("analyst-w1",) if w.name == "W1" else ("analyst-w2",)
+            fallback, lo_min = routines, 60
+        else:                                   # W1b, W2b, T (§16.18 A14, R-AN-57): start selects by the clock
+            routines, fallback, lo_min = ("analyst-wake", "analyst-w1", "analyst-w2"), ("analyst-wake",), 30
+        cand = [r for r in runs if r.get("routine") in routines]
         match = [r for r in cand if sid and r.get("session_id") == sid]
         if not match and not any(r.get("session_id") for r in cand):
-            w = clock.window_of(cid)
-            lo = rec.iso(w.entry_utc - dt.timedelta(minutes=60))
+            lo = rec.iso(w.entry_utc - dt.timedelta(minutes=lo_min))
             hi = rec.iso(w.deadline_utc)
-            match = [r for r in cand if lo <= (r.get("created_utc") or "") <= hi]
+            match = [r for r in cand if r.get("routine") in fallback and lo <= (r.get("created_utc") or "") <= hi]
         if not match:
             unmatched.add(cid)
             continue
@@ -216,7 +220,8 @@ def collect(view, upto_day, overlays):
         s = view.read_json(paths.settled_path(cid))
         tw = view.read_json(paths.twin_path(cid))
         cls = "counted" if (first_day and k[0] >= first_day) else "shakedown"
-        rows.append({"cid": cid, "day": k[0], "W": k[1], "terminal": t, "call": call, "settled": s, "twin": tw,
+        rows.append({"cid": cid, "day": k[0], "W": clock.window_type(cid), "terminal": t, "call": call,
+                     "settled": s, "twin": tw,
                      "class": cls, "overlay": cid in overlays,
                      "terminal_sha256": rec.sha256_bytes(view.read(p)),
                      "call_sha256": (t.get("call") or {}).get("sha256"),
@@ -242,7 +247,8 @@ def promotion(rows, first_day, e, verdict):
     cost = [r["settled"]["outcome"]["cost_usd"] for r in ct]
     out["P3"] = bool(n) and sum(st) > 0 and sum(s - 0.5 * c for s, c in zip(st, cost)) > 0
     mu = {}
-    for W in ("W1", "W2"):
+    # W1, W2, and W1b, W2b and T once they occur (§16.18 A14, R-AN-47, R-AN-53)
+    for W in [x for x in clock.WINDOW_TYPES if x in clock.WINDOWS or any(r["W"] == x for r in rows)]:
         tw = [r["twin"]["d_W"] for r in rows if r["W"] == W and r["twin"] and r["twin"]["status"] == "final"
               and first_day is not None and first_day <= r["day"] <= e]
         mu[W] = sum(tw) / len(tw) if tw else None
@@ -425,7 +431,7 @@ def run_state(view, processed_days, now, run_id, head_sha, verdict, write):
     E = _eproc().e_value(y)
     # K over post-promotion counted trades; 1.0 before a promotion (R-AN-52 clarification A4, as lab R-V1-34)
     K = _eproc().k_value([r["settled"]["outcome"]["y"] for r in ct if r["day"] > promoted_day]) if promoted_day else 1.0
-    term = [r for r in rows_all if r["terminal"]["status"] != "skipped:holiday"][-40:]
+    term = [r for r in rows_all if not r["terminal"]["status"].startswith("skipped:")][-40:]
     bad = [r for r in term if r["overlay"] or r["terminal"]["status"].startswith(("missed:", "no_call:"))]
     share = len(bad) / len(term) if term else 0.0
     sides = [r["settled"]["side"] for r in ct]

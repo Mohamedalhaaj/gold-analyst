@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       call_id:
-        description: "call_id (YYYY-MM-DD_W1|W2)"
+        description: "call_id (YYYY-MM-DD_W1|W2|W1b|W2b|Thhmm)"
         required: true
         type: string
 

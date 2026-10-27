@@ -18,19 +18,33 @@ def week_days(saturday):
     return [monday + dt.timedelta(days=i) for i in range(5)]
 
 
-def expected_in(mode_doc, mode, days):
+def expected_in(mode_doc, mode, days, view=None):
+    """The expected windows of `mode` on `days`: W1 and W2; from a14_from also W1b, W2b and, given a view, the trigger
+    windows with an accepted attempt witness (§16.18 A14, R-AN-11)."""
     _m, a, b = paths.mode_period(mode_doc, mode)
+    trig = {}
+    if view is not None and paths.a14_from(mode_doc):
+        for x in witness.witnesses(view, mode):
+            if x.get("kind") == "attempt" and x.get("status") == "accepted":
+                try:
+                    w = clock.window_of(x.get("id") or "")
+                except ValueError:
+                    continue
+                if w.kind == "trigger":
+                    trig.setdefault(w.day, {})[w.call_id] = w
     out = []
     for d in days:
         if a is None or d < a or (b is not None and d > b):
             continue
-        out.extend(clock.windows_on(d))
+        a14 = paths.a14_applies(mode_doc, d)
+        ws = clock.windows_on(d, a14) + (list(trig.get(d, {}).values()) if a14 else [])
+        out.extend(sorted(ws, key=lambda w: w.entry_utc))
     return out
 
 
 def week_complete(view, mode, saturday):
     mode_doc = paths.read_mode(view)
-    for w in expected_in(mode_doc, mode, week_days(saturday)):
+    for w in expected_in(mode_doc, mode, week_days(saturday), view):
         t = witness.terminal(view, mode, w.call_id)
         if t is None:
             return False, f"terminal:{w.call_id}"

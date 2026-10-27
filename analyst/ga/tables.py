@@ -41,7 +41,14 @@ class Holidays:
         return self.by.get((day.isoformat(), exchange))
 
     def is_holiday(self, window):
+        """W1, W1b: an LSE row; W2, W2b: an NYSE row; a trigger window: a row of either exchange (§16.18 A14,
+        R-AN-9)."""
+        if window.exchange is None:
+            return self.any_row(window.day)
         return self.row(window.day, window.exchange) is not None
+
+    def any_row(self, day):
+        return self.row(day, "LSE") is not None or self.row(day, "NYSE") is not None
 
     def nyse_full(self, day):
         r = self.row(day, "NYSE")

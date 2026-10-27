@@ -1,14 +1,24 @@
 """Session-written records: attempt, call, lesson (register R-AN-25, R-AN-29, R-AN-48). FROZEN.
 
 Every time in `self_reported` is informational only (prereg M1): lock evidence is server side.
+
+§16.18 A14 (R-AN-25, R-AN-90): an attempt written by this build is `analyst-attempt/2`, `/1` plus `wake` right after
+`call_id`: {kind, reason, check_utc, td} for a call attempt (kind from the call_id; reason null unless a trigger,
+then one of the five conditions; check_utc = entry − 30 min; td null unless a trigger, then the XAUUSD_M30
+provenance object), null in a lesson or revision attempt. analyst-merge accepts `/1` (W1 and W2 only) and `/2`.
 """
 import os
 import shutil
 import subprocess
 
-from . import paths, plan, rec
+from . import clock, paths, plan, rec
+from . import wake as wake_rule
 
-ATTEMPT_SCHEMA = "analyst-attempt/1"
+ATTEMPT_SCHEMA = "analyst-attempt/2"
+ATTEMPT_SCHEMA_V1 = "analyst-attempt/1"
+WAKE_REQ = "XAUUSD_M30"
+PROV_KEYS = {"src", "req", "url", "http", "td_code", "status", "reason", "bytes", "sha256", "values_n", "bars",
+             "fetched_utc", "tries"}
 CALL_SCHEMA = "analyst-call/1"
 LESSON_SCHEMA = "analyst-lesson/1"
 NOTE = "self-reported, unverified"
@@ -55,9 +65,22 @@ def self_report(now, key, env=None, version=None):
             "cc_version": version, "note": NOTE}
 
 
-def attempt(kind, mode, draw_id, n, call_id, head_sha, frozen, selfrep):
+def wake_of(w, reason=None, td_prov=None):
+    """The attempt record's `wake` of window w (R-AN-90)."""
+    return {"kind": w.kind, "reason": reason, "check_utc": rec.iso(w.check_utc), "td": td_prov}
+
+
+def attempt(kind, mode, draw_id, n, call_id, head_sha, frozen, selfrep, wake=None):
+    """An `analyst-attempt/2` record; a call attempt without an explicit `wake` gets its window's (a trigger's needs
+    the reason and the request, so it must be given)."""
+    if kind == "call" and wake is None:
+        try:
+            wake = wake_of(clock.window_of(call_id))
+        except ValueError:                       # a call_id that names no window: no wake
+            wake = None
     return {"schema": ATTEMPT_SCHEMA, "kind": kind, "mode": mode, "draw_id": draw_id, "n": n, "call_id": call_id,
-            "repo_head_sha": head_sha, "manifest_sha256": frozen["manifest_sha256"], "code_sha8": frozen["code_sha8"],
+            "wake": wake, "repo_head_sha": head_sha, "manifest_sha256": frozen["manifest_sha256"],
+            "code_sha8": frozen["code_sha8"],
             "routine_prompt_sha256": frozen["routine_prompt_sha256"], "self_reported": selfrep}
 
 
@@ -95,11 +118,39 @@ def lesson(mode, call_id, status, text_ar, settled_sha, playbook_version, attemp
             "playbook_version": playbook_version, "attempt_n": attempt_n, "self_reported": selfrep}
 
 
+def valid_wake(wake, call_id):
+    """The shape of a call attempt's `wake` (R-AN-25): kind and check_utc from the call_id, reason and td by kind."""
+    if not isinstance(wake, dict) or set(wake) != {"kind", "reason", "check_utc", "td"}:
+        return False
+    try:
+        w = clock.window_of(call_id)
+    except ValueError:
+        return False
+    if wake["kind"] != w.kind or wake["check_utc"] != rec.iso(w.check_utc):
+        return False
+    if w.kind != "trigger":
+        return wake["reason"] is None and wake["td"] is None
+    td_ = wake["td"]
+    return wake["reason"] in wake_rule.CONDITIONS and isinstance(td_, dict) and set(td_) == PROV_KEYS \
+        and td_["req"] == WAKE_REQ and isinstance(td_["bars"], list)
+
+
 def valid_attempt(doc, path_kind_ok=True):
     keys = {"schema", "kind", "mode", "draw_id", "n", "call_id", "repo_head_sha", "manifest_sha256", "code_sha8",
             "routine_prompt_sha256", "self_reported"}
-    return isinstance(doc, dict) and set(doc) == keys and doc["schema"] == ATTEMPT_SCHEMA \
-        and doc["kind"] in ("call", "lesson", "revision") and doc["n"] in (1, 2)
+    if not isinstance(doc, dict) or doc.get("schema") not in (ATTEMPT_SCHEMA, ATTEMPT_SCHEMA_V1):
+        return False
+    want = keys | ({"wake"} if doc["schema"] == ATTEMPT_SCHEMA else set())
+    if set(doc) != want or doc["kind"] not in ("call", "lesson", "revision") or doc["n"] not in (1, 2):
+        return False
+    if doc["schema"] == ATTEMPT_SCHEMA_V1:
+        try:
+            return doc["kind"] != "call" or clock.window_type(str(doc["call_id"])) in clock.WINDOWS
+        except ValueError:
+            return False
+    if doc["kind"] != "call":
+        return doc["wake"] is None
+    return valid_wake(doc["wake"], doc["call_id"])
 
 
 def valid_call(doc):
