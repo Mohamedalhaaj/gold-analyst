@@ -1,0 +1,16 @@
+# The A14 watcher (register R-AN-91). No secret is in this file: TD_API_KEY, FIRE_URL and FIRE_TOKEN are Worker
+# secrets (wrangler secret put). worker.js is uploaded as it is (no_bundle), so the deployed bytes are the file's.
+name = "gold-analyst-watcher"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+no_bundle = true
+workers_dev = true
+preview_urls = false
+
+[triggers]
+crons = ["1,31 * * * *"]
+
+# The public log (GET /log?day=YYYY-MM-DD). No id here: wrangler creates the namespace at the first deploy
+# (automatic provisioning) and keeps it linked; do not commit the id it may write back.
+[[kv_namespaces]]
+binding = "WATCHER_LOG"
