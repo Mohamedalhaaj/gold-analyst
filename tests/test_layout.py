@@ -120,10 +120,29 @@ def test_manifest_lists_the_frozen_set():
                  "analyst/ga/context.py", "analyst/ga/dref.py", "analyst/ga/settle.py", "analyst/vendor/eproc.py",
                  "analyst/vendor/tzdata/__init__.py", "analyst/tables/holidays.csv", "analyst/playbooks/v0.md",
                  "analyst/PARAMS.json", "analyst/calendars/bls_2026_2027.csv", ".claude/settings.json",
-                 ".claude/hooks/guard.py", "analyst/PROBE_SESSION_PROMPT.md"):
+                 ".claude/hooks/guard.py", "analyst/PROBE_SESSION_PROMPT.md",
+                 "watcher/worker.js", "watcher/wrangler.toml"):          # watcher/** frozen (§16.18 A14, R-AN-91)
         assert need in paths
     assert not any(p.startswith("analyst/display/") for p in paths)
     assert "analyst/calendars/macro_2026_2027.csv" not in paths          # data, refreshed by appending (A12-D19)
+    # §16.18 A14 (R-AN-91, R-AN-2): every tracked file under watcher/ is frozen with the analyst
+    assert "watcher/" in frozen.TREES
+    tracked = [p for p in _tracked() if p.startswith("watcher/")]
+    assert tracked and set(tracked) <= set(paths)
+
+
+def test_frozen_trees_skip_tool_state(tmp_path):
+    """wrangler's `.wrangler/` (git-ignored; `wrangler deploy` writes it under watcher/), `node_modules/` and bytecode
+    caches are never part of the frozen set, so a deploy from a checkout leaves the manifest unchanged."""
+    for f in frozen.FILES:
+        (tmp_path / f).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / f).write_text("x")
+    for f in ("watcher/worker.js", "watcher/.wrangler/tmp/bundle.js", "watcher/node_modules/x/index.js",
+              "watcher/tests/__pycache__/ref_wakes.cpython-312.pyc", "analyst/ga/__init__.py"):
+        (tmp_path / f).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / f).write_text("x")
+    got = [p for p in frozen.frozen_paths(tmp_path) if p.startswith(("watcher/", "analyst/ga/"))]
+    assert got == ["analyst/ga/__init__.py", "watcher/worker.js"]
 
 
 def test_tzdata_files_match_the_wheel_record():

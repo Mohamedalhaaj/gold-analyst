@@ -15,7 +15,7 @@ export const RAW = `https://raw.githubusercontent.com/${W.INBOX_REPO}/refs/heads
 export const SECRETS = {
   TD_API_KEY: "td-key-SECRET-0123456789",
   FIRE_URL: "https://api.anthropic.com/v1/claude_code/routines/trig_SECRET_0123/fire",
-  FIRE_TOKEN: "sk-ant-oat01-SECRET-fire-token",
+  FIRE_TOKEN: "fire-token-SECRET-0123456789",
 };
 
 export const at = (s) => Date.parse(s);
