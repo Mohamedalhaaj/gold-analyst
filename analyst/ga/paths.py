@@ -93,6 +93,18 @@ def mode_period(mode_doc, mode=None):
     return mode, dt.date.fromisoformat(a), (dt.date.fromisoformat(b) if b else None)
 
 
+def a14_from(mode_doc):
+    """MODE.json `a14_from` as a date, or None (§16.18 A14, R-AN-5): the first model day with W1b, W2b and trigger
+    windows."""
+    v = (mode_doc or {}).get("a14_from")
+    return dt.date.fromisoformat(v) if v else None
+
+
+def a14_applies(mode_doc, day):
+    a = a14_from(mode_doc)
+    return a is not None and day >= a
+
+
 def read_params(view):
     return view.read_json(PARAMS_PATH)
 

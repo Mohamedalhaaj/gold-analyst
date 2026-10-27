@@ -83,6 +83,12 @@ class Git:
                 out.append((parts[0].strip(), parts[1].strip()))
         return out
 
+    def ref_file(self, ref, path):
+        """The bytes of `path` at origin's branch `ref` (`git fetch origin <ref>`, then `git show FETCH_HEAD:<path>`,
+        R-AN-90); raises GitError when either fails."""
+        self._git("fetch", "--quiet", self.remote, ref)
+        return self._git("show", f"FETCH_HEAD:{path}").stdout
+
     def remote_url(self):
         """origin's URL as git uses it (insteadOf rewrites applied), or None."""
         p = self._git("remote", "get-url", self.remote, check=False)

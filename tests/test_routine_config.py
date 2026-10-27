@@ -236,8 +236,11 @@ def test_the_template_prompts():
     assert {r["name"]: r["prompt"] for r in t["routines"]} == {
         "analyst-w1": "Follow the section CALL of analyst/ROUTINE_PROMPT.md exactly.",
         "analyst-w2": "Follow the section CALL of analyst/ROUTINE_PROMPT.md exactly.",
+        "analyst-wake": "Follow the section CALL of analyst/ROUTINE_PROMPT.md exactly.",
         "analyst-lesson": "Follow the section LESSON of analyst/ROUTINE_PROMPT.md exactly.",
         "analyst-revision": "Follow the section REVISION of analyst/ROUTINE_PROMPT.md exactly."}
+    wake_ = next(r for r in t["routines"] if r["name"] == "analyst-wake")     # §16.18 A14 (R-AN-61)
+    assert wake_["crons"] == [] and wake_["allowed_tools"] == ["Bash", "Read", "Write"] and wake_["project"] is None
     p = t["probe_session"]
     assert (p["name"], p["prompt"]) == ("analyst-probe", "Follow analyst/PROBE_SESSION_PROMPT.md exactly.")
     assert p["allowed_tools"] == ["Bash", "Read", "Write"] and "C20" in p["note"]

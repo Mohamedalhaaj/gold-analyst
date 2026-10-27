@@ -52,7 +52,7 @@ GUARD_PATH = ROOT / ".claude" / "hooks" / "guard.py"
 
 RUNS_SCHEMA = "analyst-runs/1"
 C20_SCHEMA = "analyst-check-c20/1"
-ROUTINES = ("analyst-w1", "analyst-w2", "analyst-lesson", "analyst-revision")
+ROUTINES = ("analyst-w1", "analyst-w2", "analyst-wake", "analyst-lesson", "analyst-revision")   # §16.18 A14
 PROBE_ROUTINE = "analyst-probe"
 PROBE_LINE = "python3 analyst/run_window.py probe"
 SECURITY_LOG_FILTER = "repo:Mohamedalhaaj/gold-analyst-inbox action:hook"
@@ -178,6 +178,8 @@ def check_run(run, where):
           where + ".created_utc")
     if "tool_log" in run:
         check_tool_log(run["tool_log"], where + ".tool_log")
+    if "start_reason" in run:               # §16.18 A14 (R-AN-60): the enum `start` printed, or null
+        _need(_opt_str(run["start_reason"]), where + ".start_reason")
 
 
 def check_security_log(ic):
@@ -212,6 +214,9 @@ def check(doc, kind):
             check_run(r, f"runs[{i}]")
         if "inbox_checks" in doc:
             check_security_log(doc["inbox_checks"])
+        if "watcher_log" in doc:            # §16.18 A14 (R-AN-60): the watcher's entries for the week's model days
+            _need(isinstance(doc["watcher_log"], list) and all(isinstance(e, dict) for e in doc["watcher_log"]),
+                  "watcher_log")
     elif kind == "c20":
         _need(doc.get("schema") == C20_SCHEMA, "schema")
         _need(doc.get("routine") == PROBE_ROUTINE, "routine")

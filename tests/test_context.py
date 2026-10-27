@@ -20,6 +20,7 @@ def world(day, store_last, extra=None, missing=(), overrides=None, fetched_utc=N
     files = repo_files({"analyst/MODE.json": mode_json("canary", canary_from="2026-10-19")})
     files.update(store_files(days, missing=missing, overrides=overrides, fetched_utc=fetched_utc))
     files[store.SLOTS_PATH] = default_slots(day).encode()
+    files[context.FORECASTS_PATH] = default_slots(day).encode()      # §16.18 A14: D_ref's rows (R-AN-21)
     files.update(extra or {})
     return DictView(files)
 
@@ -48,7 +49,7 @@ def test_ok_context_admission_and_shape():
     asof = dt.datetime(2026, 11, 10, 7, 20, 13, tzinfo=UTC)
     ctx, feed = build(world(w.day, dt.date(2026, 11, 9)), w, asof)
     assert ctx["status"] == "ok", ctx["detail"]
-    assert ctx["schema"] == "analyst-context/3"
+    assert ctx["schema"] == "analyst-context/4"
     assert ctx["store"]["complete_utc"] == "2026-11-10T00:00:00Z"
     assert ctx["store"]["start_hist_utc"] == "2026-10-26T21:00:00Z"   # model 00:00 of 2026-10-27 (EDT)
     # eight requests, in R-AN-87's order (AUDJPY after USDCHF, before fresh), none with a key
@@ -104,8 +105,8 @@ def test_ok_context_admission_and_shape():
     assert ctx["memory"] is None                                    # canary
     keys = ["schema", "call_id", "mode", "window", "model_day", "entry_utc", "exit_utc", "deadline_utc",
             "entry_server", "exit_server", "asof_utc", "repo_head_sha", "params", "store", "files", "bars_h1",
-            "bars_d1", "p_ref", "fx", "risk", "us2y", "fresh", "sources", "events", "d_ref", "levels", "memory",
-            "status", "detail"]
+            "bars_d1", "p_ref", "fx", "risk", "us2y", "fresh", "sources", "events", "d_ref", "levels", "wake",
+            "memory", "status", "detail"]                                # §16.18 A14: wake right after levels
     assert list(ctx) == keys
     json.dumps(ctx, allow_nan=False)
     assert context.context_sha256(ctx) == rec.compact_sha256(ctx)
@@ -118,7 +119,8 @@ def test_the_sources_note_is_exact():
                 "UTC; bars_h1 entries with src store are Dukascopy mid; bars_d1 cover the 25 weekdays before the "
                 "model day and are built from hourly bars made as bars_h1's are, but bars_h1 lists only the last 10 "
                 "of those days, so the older bars_d1 days come from Dukascopy store hours not shown in bars_h1; "
-                "Twelve Data and Dukascopy levels can differ slightly; settlement uses Dukascopy."}
+                "Twelve Data and Dukascopy levels can differ slightly; settlement uses Dukascopy. wake values and "
+                "wake.bars_m30 come from Twelve Data 30-minute bars in UTC, labelled by their start."}   # §16.18 A14
 
 
 def test_forming_hour_boundary():
@@ -389,7 +391,7 @@ def test_levels_follow_from_the_recorded_bars():
 def test_levels_are_null_unless_status_is_ok():
     w = clock.Window(dt.date(2026, 11, 10), "W1")
     asof = dt.datetime(2026, 11, 10, 7, 20, tzinfo=UTC)
-    few = {store.SLOTS_PATH: default_slots(w.day, n_days=5).encode()}
+    few = {context.FORECASTS_PATH: default_slots(w.day, n_days=5).encode()}
     ctx, _ = build(world(w.day, dt.date(2026, 11, 9), extra=few), w, asof)
     assert (ctx["status"], ctx["detail"]) == ("no_call:d_ref", "rows") and ctx["levels"] is None
     assert ctx["risk"] is not None

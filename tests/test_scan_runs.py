@@ -643,3 +643,17 @@ def test_the_security_log_fields_pass(root, fields):
 def test_the_security_log_fields_break_the_schema(root, name, fields):
     with pytest.raises(scan_runs.SchemaError):
         scan_runs.scan(with_checks(**fields), "runs", root=root)
+
+
+# ---------------------------------------------------------------- §16.18 A14 (R-AN-60, R-AN-86): analyst-wake runs
+def test_wake_runs_are_scanned_and_start_reason_and_watcher_log_are_checked(root):
+    doc = export(("analyst-wake", [call("Bash", {"command": L + "start"})]))
+    doc["runs"][0]["start_reason"] = "not_triggered"
+    doc["watcher_log"] = [{"check_utc": "2026-11-10T11:00:00Z", "decision": "fired"}]
+    scan_runs.scan(copy.deepcopy(doc), "runs", root=root)
+    assert "analyst-wake" in scan_runs.ROUTINES
+    for brk in (lambda d: d["runs"][0].update(start_reason=3), lambda d: d.update(watcher_log={"a": 1})):
+        bad = copy.deepcopy(doc)
+        brk(bad)
+        with pytest.raises(scan_runs.SchemaError):
+            scan_runs.scan(bad, "runs", root=root)

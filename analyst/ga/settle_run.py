@@ -12,6 +12,7 @@ of the closer; settlement, the pause rule and the state still run, so slow pushe
 verdict feeds P7 and the pause rule only when it is fresh (state.fresh_verdict: asof_utc within 48 h, and, since
 §16.18 A7 decision 15, not older than the newest fresh verdict an earlier run fetched); 48 h without a fresh one
 pauses `judge_silent` (R-AN-55, R-AN-70)."""
+import datetime as dt
 import json
 import urllib.request
 
@@ -53,11 +54,11 @@ def settle_windows(ws, now, run_id, head_sha, log=lambda s: None):
     rows = store.parse_days((view.read(store.DAYS_PATH) or b"").decode("utf-8"))
     rbk = store.final_status(rows)
     done = []
-    for w in merge.expected_windows(mode_doc, "live", now.date()):
+    for w in merge.expected_windows(mode_doc, "live", now.date(), view):
         t = view.read_json(paths.terminal_path("live", w.call_id))
         if t is None:
             break
-        if t["status"] == "skipped:holiday":
+        if t["status"].startswith("skipped:"):     # no twin for any skipped:* status (§16.18 A14, R-AN-40)
             done.append(w)
             continue
         need_settle = t["status"] == "called"
@@ -83,6 +84,17 @@ def settle_windows(ws, now, run_id, head_sha, log=lambda s: None):
     return done
 
 
+def day_end(d):
+    """model_to_utc((d+1) 00:00): the end of model day d's trading (R-AN-40, §16.18 A14)."""
+    return clock.model_to_utc(dt.datetime.combine(d + dt.timedelta(days=1), dt.time(0)))
+
+
+def day_expected(view, d):
+    """The live expected windows of model day d (R-AN-11): W1, W2 (W1b, W2b and its trigger windows with an
+    accepted attempt witness once d >= a14_from)."""
+    return [w for w in merge.expected_windows(paths.read_mode(view), "live", d, view) if w.day == d]
+
+
 def run_settle(ws, api, now_fn, run_info, verdict=None, sleep=lambda s: None, inbox=None, log=lambda s: None,
                dispatch=True):
     """now_fn: a callable returning the run's aware UTC time (R-C5: taken once for the records). `inbox` defaults
@@ -99,7 +111,8 @@ def run_settle(ws, api, now_fn, run_info, verdict=None, sleep=lambda s: None, in
     ids = {w.call_id for w in done}
     prev = (ws.view.read_json(paths.STATE_PATH) or {}).get("last_processed_day") or ""
     full = [d for d in sorted({w.day for w in done})
-            if all(x.call_id in ids for x in clock.windows_on(d)) and d.isoformat() > prev]
+            if all(x.call_id in ids for x in day_expected(ws.view, d)) and d.isoformat() > prev
+            and (not paths.a14_applies(paths.read_mode(ws.view), d) or now >= day_end(d))]
     st = state.run_state(ws.view, full, now, run_info.get("id"), head, verdict, ws.write)
     ws.write(paths.STATE_PATH, rec.record_bytes(st))
     ws.write(paths.LEDGER_PATH, state.ledger_csv(ws.view, now))

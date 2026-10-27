@@ -1,7 +1,7 @@
 # gold-analyst
 
 A pre-registered paper test of an LLM "analyst" for XAU/USD (xauusd-quant `research/analyst/ANALYST_V1_PREREG.md`,
-DRAFT v0.6, and `research/system/IMPLEMENTATION_REGISTER.md` §16 with its amendments §16.18 A6 to A12). It is not
+DRAFT v0.6, and `research/system/IMPLEMENTATION_REGISTER.md` §16 with its amendments §16.18 A6 to A14). It is not
 advice and it never trades. Nobody has shown that the analyst has an edge; the expected result is "not promoted".
 
 ## How it runs
@@ -86,6 +86,22 @@ advice and it never trades. Nobody has shown that the analyst has an edge; the e
   `VIOLATION routine_project <name>` for a routine whose `project` is missing or not null, and a C20 record's verdict
   must agree with its `cc_version` (pass needs 2.1.295 or later).
 - `analyst/MODE.json` selects `canary` (records under `analyst/canary/`, never settled or shown), `live` or `off`.
+- Continuous watching (§16.18 A14, R-AN-89..R-AN-91), for model days on or after MODE.json `a14_from` (null: W1 and
+  W2 only, as before). Two second looks at fixed times, W1b = W1 + 2 h and W2b = W2 + 2 h, and trigger windows
+  `<model_day>_T<hhmm>`. A trigger fires when a fixed price condition holds at a 30-minute check: the price breaks
+  above or below the Asia range (from 07:00 UTC), comes within a tenth of R20 of yesterday's high or low, or moves at
+  least 0.3 R20 in an hour. R20 is the median daily range of the last 20 days. Checks run every 30 minutes from
+  22:30 UTC to L_d (16:30 UTC on New York summer time, 17:30 in winter). Every window is 4 hours from check + 30 min,
+  one trade at a time, at most 6 decisions a model day. The rule is one pure function, `analyst/ga/wake.py`.
+  `run_window.py start` picks the window by the clock (W1/W2, then W1b/W2b, then the trigger candidate). After the
+  old refusals it refuses `trade_open` and `day_cap` for a first draw, reading the day's files on main and the
+  inbox's unmerged branches. For a trigger it then makes one Twelve Data 30-minute request at T + 130 s
+  (`wake_data`) and recomputes the rule from it (`not_triggered`). The attempt record (`analyst-attempt/2`) keeps
+  `wake` with that response's bars. The context becomes `analyst-context/4` with a `wake` block. D_ref for every
+  window reads `mirror/system/forecasts.csv` (every slot). analyst-merge accepts the new ids, rejects a late trigger
+  push `window_order`, and closes W1, W2, W1b and W2b `skipped:trade_open` or `skipped:day_cap` when a gate held.
+  The routine `analyst-wake` (an API trigger, no schedule) is fired by the watcher in `watcher/` (a Cloudflare
+  Worker); `ROUTINE_PROMPT.md` and the guard are unchanged.
 
 ## Layout
 - `analyst/ga/`: the frozen code (session scripts, probes, context, D_ref, merge, settlement, state). The session uses
@@ -98,7 +114,8 @@ advice and it never trades. Nobody has shown that the analyst has an edge; the e
   whose project directory is this repository, a local one included, runs under the guard and can do nothing but the
   routine's steps: maintain the repository from a session started outside it.
 - `analyst/display/`: the page and the tracker (display only).
-- `mirror/`: inputs copied by a script from the system store (forecast rows of slots 9, 10, 15 and the M1 day files).
+- `mirror/`: inputs copied by a script from the system store (forecast rows of slots 9, 10, 15, the whole forecast
+  store as `mirror/system/forecasts.csv` since §16.18 A14, which D_ref reads, and the M1 day files).
 - `tests/`: `uv run --group dev pytest`.
 
 No secret is stored in this repository; workflows reference them by name only (`CLOUDFLARE_API_TOKEN` in the

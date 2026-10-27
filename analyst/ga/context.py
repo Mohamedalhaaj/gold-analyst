@@ -20,6 +20,11 @@ does not enter proxy_pct. The store days now run from start_lv = model 00:00 of 
 bars_h1. `levels` (ga/levels.py, R-AN-88), right after `d_ref`, is computed after D_ref from these bars, and is null
 unless `status` is `ok`.
 
+Since §16.18 A14 (`analyst-context/4`, every window): `wake`, right after `levels`, is ga/wake.context_block of the
+attempt record's `wake` (kind, reason, check_utc; for a trigger also `values`, `r20_days` and `bars_m30` from its
+recorded 30-minute bars); D_ref's rows come from `mirror/system/forecasts.csv` (every slot), whose sha256 is
+`store.slots_sha256`; the `sources` note gains one sentence on the 30-minute bars.
+
 Detail codes: store_stale (more than 60 listed hours), store_mismatch (a raw file differs from its row), td_<reason>
 (the XAUUSD request not `ok` while a listed hour is required: td_key, td_plan, td_credits, td_server, td_invalid,
 td_other, td_budget), hour_absent (XAUUSD `ok` without a bar at a required listed hour), no_price (no P_ref at all),
@@ -31,14 +36,18 @@ import datetime as dt
 import math
 
 from . import clock, dref, hours, levels, memory, rec, store, tables, td
+from . import wake as wake_rule
 
-SCHEMA = "analyst-context/3"
+SCHEMA = "analyst-context/4"
+FORECASTS_PATH = "mirror/system/forecasts.csv"
+WAKE_NOTE = " wake values and wake.bars_m30 come from Twelve Data 30-minute bars in UTC, labelled by their start."
 SOURCES = {"history": "dukascopy_store", "today": "twelvedata_1h",
            "note": "bars_h1 entries with src td, p_ref when p_ref_src is td, and fx come from Twelve Data hourly bars "
                    "in UTC; bars_h1 entries with src store are Dukascopy mid; bars_d1 cover the 25 weekdays before "
                    "the model day and are built from hourly bars made as bars_h1's are, but bars_h1 lists only the "
                    "last 10 of those days, so the older bars_d1 days come from Dukascopy store hours not shown in "
-                   "bars_h1; Twelve Data and Dukascopy levels can differ slightly; settlement uses Dukascopy."}
+                   "bars_h1; Twelve Data and Dukascopy levels can differ slightly; settlement uses Dukascopy."
+                   + WAKE_NOTE}
 MAX_LISTED_HOURS = 60
 HIST_WEEKDAYS = 10
 LV_WEEKDAYS = 25
@@ -76,8 +85,9 @@ def _by_time(values):
     return {v[0]: v for v in values}
 
 
-def build(view, head_sha, mode, w, asof, params, fetcher, with_memory=None):
-    """The context object for window `w` at `asof` (aware UTC, floored to the second); `fetcher` is a td.Fetcher."""
+def build(view, head_sha, mode, w, asof, params, fetcher, with_memory=None, wake=None):
+    """The context object for window `w` at `asof` (aware UTC, floored to the second); `fetcher` is a td.Fetcher;
+    `wake` is the attempt record's `wake` (R-AN-90)."""
     asof = rec.floor_s(asof)
     asof_s = rec.iso(asof)
     d = w.day
@@ -85,7 +95,7 @@ def build(view, head_sha, mode, w, asof, params, fetcher, with_memory=None):
     holidays = tables.load_holidays(view)
     events = tables.load_events(view)
     days_b = view.read(store.DAYS_PATH) or b""
-    slots_b = view.read(store.SLOTS_PATH) or b""
+    slots_b = view.read(FORECASTS_PATH) or b""
     rows = store.parse_days(days_b.decode("utf-8"))
     complete = store.complete_utc(rows, asof)
     start_hist = clock.model_to_utc(dt.datetime.combine(clock.weekday_before(d, HIST_WEEKDAYS), dt.time(0)))
@@ -103,7 +113,8 @@ def build(view, head_sha, mode, w, asof, params, fetcher, with_memory=None):
                   "days_csv_sha256": rec.sha256_bytes(days_b), "slots_sha256": rec.sha256_bytes(slots_b)},
         "files": [], "bars_h1": [], "bars_d1": [], "p_ref": None,
         "fx": None, "risk": None, "us2y": "unknown", "fresh": None, "sources": dict(SOURCES),
-        "events": events.context_block(d), "d_ref": None, "levels": None, "memory": None,
+        "events": events.context_block(d), "d_ref": None, "levels": None,
+        "wake": wake_rule.context_block(wake) if wake else None, "memory": None,
         "status": "ok", "detail": None,
     }
 

@@ -26,7 +26,7 @@ TRADE_KEYS = {"action", "stop_mult", "target_mult", "confidence", "reason_ar", "
 STAY_KEYS = {"action", "confidence", "reason_ar", "key_risks_ar"}
 STAY_OUT_REASONS = ("event_risk", "no_setup", "conflicting_signals", "mid_range")
 STAY_KEYS_A12 = STAY_KEYS | {"stay_out_reason"}
-REASON_CONTEXT_SCHEMAS = ("analyst-context/3",)
+REASON_CONTEXT_SCHEMAS = ("analyst-context/3", "analyst-context/4")   # /4 = /3 + wake (§16.18 A14)
 
 
 def stay_reason_applies(context_schema):

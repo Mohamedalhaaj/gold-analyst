@@ -29,8 +29,11 @@ STATUS_AR = {"no_call:data": "لا خطة: بيانات ناقصة", "no_call:d_
              "no_call:invalid": "لا خطة: خطة غير صالحة", "no_call:refusal": "لا خطة: امتنع النموذج",
              "no_call:late": "لا خطة: قُفلت متأخرة", "no_call:run": "لا خطة: لم يكتمل التشغيل",
              "no_call:model": "لا خطة: نموذج آخر", "missed:trigger": "فاتت: لم يبدأ التشغيل",
-             "missed:push": "فاتت: تعذّر الإرسال", "skipped:holiday": "عطلة"}
-CLOCK_LABEL = {"server": "توقيت المنصة", "tripoli": "طرابلس", "W1": "لندن", "W2": "نيويورك"}
+             "missed:push": "فاتت: تعذّر الإرسال", "skipped:holiday": "عطلة",
+             "skipped:trade_open": "صفقة سابقة ما زالت مفتوحة", "skipped:day_cap": "بلغ الحد اليومي للقرارات"}
+CLOCK_LABEL = {"server": "توقيت المنصة", "tripoli": "طرابلس", "W1": "لندن", "W2": "نيويورك", "W1b": "لندن",
+               "W2b": "نيويورك", "T": "UTC"}
+WINDOW_AR = {"W1": "لندن", "W2": "نيويورك", "W1b": "لندن، نظرة ثانية", "W2b": "نيويورك، نظرة ثانية"}
 CARDS = 8
 
 
@@ -63,7 +66,7 @@ def record_block(st, ledger_rows):
     E = st.get("E")
     promoted = st.get("state") == "PROMOTED"
     mu = {}
-    for W in ("W1", "W2"):
+    for W in sorted({"W1", "W2"} | {r["window"] for r in ledger_rows}):
         d = [float(r["d_W"]) for r in ledger_rows if r["window"] == W and r["class"] == "counted"
              and r.get("twin_status") == "final" and r.get("d_W")]
         mu[W] = sum(d) / len(d) if d else None
@@ -102,7 +105,8 @@ def track_block(tr, now, L_min, exit_utc):
 def card(view, t, call, st, ledger_rows, track, pins, now, L_min):
     w = clock.window_of(t["call_id"])
     status = t["status"]
-    head = f'<h2>{esc(w.day.isoformat())} · {"لندن" if w.name == "W1" else "نيويورك"}</h2>'
+    label = WINDOW_AR.get(w.name) or f"إشارة سعرية {w.check_utc.strftime('%H:%M')} UTC"
+    head = f'<h2>{esc(w.day.isoformat())} · {esc(label)}</h2>'
     parts = [f'<article class="card" data-entry="{rec.epoch_ms(w.entry_utc)}" data-exit="{rec.epoch_ms(w.exit_utc)}">',
              head]
     if status in ("called", "stay_out"):

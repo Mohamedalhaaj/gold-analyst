@@ -21,6 +21,11 @@ transport, classification and provenance), then `fresh`, one at a time: at most 
 - Provenance per request: src, req, url, http, td_code, status, reason, bytes, sha256, values_n, bars (filled by the
   context with the bars it uses), fetched_utc, tries. No raw body, `meta` or `message` is kept (decision A9-D6).
 
+§16.18 A14 (R-AN-90): a trigger window's session makes one more request in `start`, `XAUUSD_M30` (m30_url, interval
+30min: an element's `datetime` has minute 00 or 30 and second 00), with the same transport, classification and
+provenance; at most 9 requests a window. `start` keeps the monotonic time of the request's last try (`last_start`)
+in the session's scratch state so that `context` keeps the 8.0 s pacing across the two steps.
+
 Interpretations (logged for the register): a price must also be finite (a decimal string too long for a double
 overflows to inf, which a record cannot hold, R-AN-3); a body is read up to 262,145 bytes, so `bytes` and `sha256` of a
 longer body are those of its first 262,145 bytes, and it is classified `invalid`; any exception of the transport
@@ -59,6 +64,12 @@ def _stamp(t):
 def series_url(sym, a, b):
     """The 1h URL of instrument `sym` (an R-AN-19 name or XAUUSD) from `a` to `b` (aware UTC)."""
     return (f"{BASE_URL}?symbol={SYMBOLS[sym]}&interval=1h&start_date={_stamp(a)}&end_date={_stamp(b)}"
+            f"&timezone=UTC&order=asc&outputsize=5000&dp=5")
+
+
+def m30_url(a, b):
+    """The XAUUSD_M30 URL (R-AN-90) from `a` to `b` (aware UTC)."""
+    return (f"{BASE_URL}?symbol=XAU/USD&interval=30min&start_date={_stamp(a)}&end_date={_stamp(b)}"
             f"&timezone=UTC&order=asc&outputsize=5000&dp=5")
 
 
@@ -118,7 +129,8 @@ def parse_values(values, interval):
         if not isinstance(v, dict) or not isinstance(v.get("datetime"), str) or not DATETIME_RE.match(v["datetime"]):
             raise ValueError("datetime")
         t = dt.datetime.strptime(v["datetime"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=rec.UTC)
-        if t.second != 0 or (interval == "1h" and t.minute != 0):
+        bad_min = (interval == "1h" and t.minute != 0) or (interval == "30min" and t.minute not in (0, 30))
+        if t.second != 0 or bad_min:
             raise ValueError("datetime")
         if t in seen:
             raise ValueError("duplicate")
@@ -131,7 +143,7 @@ def parse_values(values, interval):
 
 
 def classify(http, body, interval):
-    """(status, reason, td_code, values) for one final response; `interval` is "1h" or "1min"."""
+    """(status, reason, td_code, values) for one final response; `interval` is "1h", "30min" or "1min"."""
     code = td_code(http, body)
     if http == 200 and code == 200 and body is not None and len(body) <= MAX_BYTES:
         doc = _doc(body)
