@@ -1,8 +1,9 @@
 {
+ "a14_from": "2026-10-29",
  "canary_from": "2026-10-26",
  "canary_to": null,
  "live_from": null,
  "mode": "canary",
- "note": "canary from Monday 2026-10-26 (register §16.18 A6 Canary: the first weekday by whose 06:00 UTC every condition holds; client's go-ahead 2026-10-26). Before 06:00 UTC: amendments A8, A9 (Twelve Data through a network secret) and A10 (run log read in full) approved; C20 run 4 passed (PROBE_p20261026T042331Z, checks/C20.json); C7 complete; the newest judge verdict (2026-10-26T04:37:03Z) is SOUND with empty violation_keys; analyst/state/ holds no event; fresh routine export committed; the four routines on",
+ "note": "canary from Monday 2026-10-26 (register §16.18 A6 Canary: the first weekday by whose 06:00 UTC every condition holds; client's go-ahead 2026-10-26). Before 06:00 UTC: amendments A8, A9 (Twelve Data through a network secret) and A10 (run log read in full) approved; C20 run 4 passed (PROBE_p20261026T042331Z, checks/C20.json); C7 complete; the newest judge verdict (2026-10-26T04:37:03Z) is SOUND with empty violation_keys; analyst/state/ holds no event; fresh routine export committed; the four routines on | 2026-10-27T22:36:53Z: a14_from 2026-10-29 (register §16.18 A14, R-AN-5; client's approval of A14 on 2026-10-27): the first model day with W1b, W2b and trigger windows and the start of the canary's A14 count. Set before 22:00:00Z of 2026-10-28, with the A14 build a6158a3 and analyst/WATCHER_CONFIG.json (deployed_utc 2026-10-27T22:32:59Z) already on main. Wednesday 2026-10-28 runs W1 and W2 only, on the A14 build.",
  "set_utc": "2026-10-26T04:44:40Z"
 }
