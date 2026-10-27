@@ -2,10 +2,10 @@
  "E": 1.0,
  "E_star": 400.0,
  "K": 1.0,
- "asof_utc": "2026-10-27T02:06:45Z",
+ "asof_utc": "2026-10-27T09:11:08Z",
  "calls_enabled": false,
  "first_day": null,
- "head_sha": "c2e02fd517e99dd92e073da405bc188811fb80b6",
+ "head_sha": "3b80a0141df2073e8688d9876d391e62c5b0519b",
  "judge_verdict": {
   "asof_utc": null,
   "fetched": false,
@@ -21,7 +21,7 @@
   "judge_silent"
  ],
  "paused_display": false,
- "run_id": 40436508056,
+ "run_id": 40478841282,
  "schema": "analyst-state/1",
  "side_label": false,
  "side_share": null,
