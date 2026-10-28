@@ -1,0 +1,7 @@
+symbol,hour_utc,first_ok_utc,lag_s,polls,first_404_utc,first_empty_utc,bytes,sha256,recheck_utc,recheck_sha256,same
+XAUUSD,2026-10-28T14:00:00Z,,,2,,,,,,,
+EURUSD,2026-10-28T14:00:00Z,2026-10-28T16:56:50Z,7010,2,,,22049,f4394e50f80d6a3b3db122e3c03e36299ff277c6b7d995d846530cbbd75404c6,,,
+USDJPY,2026-10-28T14:00:00Z,,,2,,,,,,,
+GBPUSD,2026-10-28T14:00:00Z,,,2,,,,,,,
+USDCAD,2026-10-28T14:00:00Z,,,2,,,,,,,
+USDCHF,2026-10-28T14:00:00Z,,,2,,,,,,,
