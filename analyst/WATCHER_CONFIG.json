@@ -1,9 +1,9 @@
 {
  "schema": "analyst-watcher-config/1",
- "exported_utc": "2026-10-27T22:34:30Z",
+ "exported_utc": "2026-10-29T16:16:41Z",
  "worker_name": "gold-analyst-watcher",
- "source_commit": "a6158a3bf37a82d1c2bdcb7a6a00465a5ea2c69f",
- "script_sha256": "8ee6f158ae625cbb7b8306a26ed611a6df91f09778d2c014a4c35dc963942b4d",
+ "source_commit": "ced2ab9c27f6e587843bfe0ccb548b4b344b302b",
+ "script_sha256": "1587525cc9f3949dc66b6badc85f8915a69f6fcd3c7fa4835695f6c93f20989f",
  "crons": [
   "1,31 * * * *"
  ],
@@ -22,6 +22,6 @@
   }
  ],
  "kv_namespace": "gold-analyst-watcher-watcher-log (binding WATCHER_LOG, created by wrangler's automatic provisioning at the first deploy)",
- "deployed_utc": "2026-10-27T22:32:59Z",
- "note": "Register §16.18 A14, R-AN-91. The owner deployed watcher/ with npx --yes wrangler@4.151.1 deploy from a clean detached checkout of source_commit (the A14 build merge on gold-analyst main), no_bundle: the uploaded script is watcher/worker.js byte for byte (sha256 above); the deploy left wrangler.toml unchanged. Code upload 2026-10-27T17:28:48Z (version 9ac5f0fa-19a2-4cce-9bc6-cf99fb7a8024), cron 1,31 * * * *, route https://gold-analyst-watcher.xauusd-quant.workers.dev/log (GET /log?day=2026-10-28 returned [] at 17:28:59Z). The client then set the three secrets in his own terminal with wrangler secret put (FIRE_URL and FIRE_TOKEN of the routine analyst-wake, TD_API_KEY piped from the keychain); each made a new version, the last at 2026-10-27T22:32:59Z (version fde25d07-beb6-4654-99fa-c9f969fe369b, 100%), which is deployed_utc. wrangler secret list shows exactly FIRE_TOKEN, FIRE_URL and TD_API_KEY; no value was read by the owner or written anywhere. Before the deploy the watcher's exact fire request (anthropic-version 2023-06-01, the routine beta header, body {} with no text) was sent once to the test routine wake-test and was accepted (HTTP 200, 2026-10-27T17:18:36Z), which settles the register's open point on a fire with no text."
+ "deployed_utc": "2026-10-29T16:16:18Z",
+ "note": "Register §16.18 A15 (R-AN-91 export after a change of the Worker). The owner deployed watcher/ with npx --yes wrangler@4.151.1 deploy from a clean detached checkout of source_commit (the A15 build merge on gold-analyst main), no_bundle: the uploaded script is watcher/worker.js byte for byte (sha256 above); wrangler.toml unchanged; the KV binding WATCHER_LOG is inherited. Version e254565a-c28d-42c1-9684-ec93cfa48ad9 created 2026-10-29T16:16:18Z (deployed_utc). The three secrets set by the client on 2026-10-27 persist across the deploy: wrangler secret list shows exactly FIRE_TOKEN, FIRE_URL and TD_API_KEY; no value was read. Until MODE.json a15_from the Worker applies the A14 rule; from a15_from it no longer gates on open trades (A15). Previous export: source_commit a6158a3 (A14), deployed_utc 2026-10-27T22:32:59Z."
 }
