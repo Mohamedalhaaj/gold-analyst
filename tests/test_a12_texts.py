@@ -18,7 +18,7 @@ def test_playbook_v0_keeps_the_format_rules():
 
 
 def test_system_prompt_keeps_its_opening_and_names_every_stay_out_reason():
-    t = (ROOT / "analyst/prompts/system.md").read_text("utf-8")
+    t = " ".join((ROOT / "analyst/prompts/system.md").read_text("utf-8").split())   # §16.18 A15 rewrapped it
     assert "You are an analyst under test." in t and "Nobody has shown that you have an edge" in t
     assert "Judge buy and sell by the same standard." in t
     for r in plan.STAY_OUT_REASONS:

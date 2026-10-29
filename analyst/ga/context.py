@@ -25,6 +25,15 @@ attempt record's `wake` (kind, reason, check_utc; for a trigger also `values`, `
 recorded 30-minute bars); D_ref's rows come from `mirror/system/forecasts.csv` (every slot), whose sha256 is
 `store.slots_sha256`; the `sources` note gains one sentence on the 30-minute bars.
 
+Since §16.18 A15 (`analyst-context/5`, every window): `review`, right after `wake`, is ga/review.block of the open set
+`context` read before its first request (R-AN-92; null when the set is empty or the model day is before a15_from).
+When it is not empty and some open trade's entry bar has closed by asof, one more request, `XAUUSD_M30R` (30-minute
+XAU/USD bars from the earliest open entry to asof floored to the half hour; its `bars` hold the elements with
+A <= t_utc and t_utc + 30 min <= asof_utc), is the context's last request, after `fresh`; it never changes `status`,
+and a context that stops at XAUUSD does not make it. In canary mode a context of a model day >= a15_from has a
+`memory` built from the canary records (R-AN-95); `settled` and `pending` entries carry `side` after `action`. The
+`sources` note gains one sentence on the review prices.
+
 Detail codes: store_stale (more than 60 listed hours), store_mismatch (a raw file differs from its row), td_<reason>
 (the XAUUSD request not `ok` while a listed hour is required: td_key, td_plan, td_credits, td_server, td_invalid,
 td_other, td_budget), hour_absent (XAUUSD `ok` without a bar at a required listed hour), no_price (no P_ref at all),
@@ -35,19 +44,22 @@ Interpretations (logged for the register): `fresh` is null when its fetched_utc 
 import datetime as dt
 import math
 
-from . import clock, dref, hours, levels, memory, rec, store, tables, td
+from . import clock, dref, hours, levels, memory, paths, rec, store, tables, td
+from . import review as review_rule
 from . import wake as wake_rule
 
-SCHEMA = "analyst-context/4"
+SCHEMA = "analyst-context/5"
 FORECASTS_PATH = "mirror/system/forecasts.csv"
 WAKE_NOTE = " wake values and wake.bars_m30 come from Twelve Data 30-minute bars in UTC, labelled by their start."
+REVIEW_NOTE = (" review prices come from Twelve Data 30-minute bars in UTC and are indicative; settlement uses "
+               "Dukascopy minutes, where an open trade may already have reached its stop or target.")
 SOURCES = {"history": "dukascopy_store", "today": "twelvedata_1h",
            "note": "bars_h1 entries with src td, p_ref when p_ref_src is td, and fx come from Twelve Data hourly bars "
                    "in UTC; bars_h1 entries with src store are Dukascopy mid; bars_d1 cover the 25 weekdays before "
                    "the model day and are built from hourly bars made as bars_h1's are, but bars_h1 lists only the "
                    "last 10 of those days, so the older bars_d1 days come from Dukascopy store hours not shown in "
                    "bars_h1; Twelve Data and Dukascopy levels can differ slightly; settlement uses Dukascopy."
-                   + WAKE_NOTE}
+                   + WAKE_NOTE + REVIEW_NOTE}
 MAX_LISTED_HOURS = 60
 HIST_WEEKDAYS = 10
 LV_WEEKDAYS = 25
@@ -85,9 +97,10 @@ def _by_time(values):
     return {v[0]: v for v in values}
 
 
-def build(view, head_sha, mode, w, asof, params, fetcher, with_memory=None, wake=None):
+def build(view, head_sha, mode, w, asof, params, fetcher, with_memory=None, wake=None, review_open=None):
     """The context object for window `w` at `asof` (aware UTC, floored to the second); `fetcher` is a td.Fetcher;
-    `wake` is the attempt record's `wake` (R-AN-90)."""
+    `wake` is the attempt record's `wake` (R-AN-90); `review_open` is O(R), the open trades' review.open_sets
+    entries, which the session read before this call (R-AN-92; None or empty: no review)."""
     asof = rec.floor_s(asof)
     asof_s = rec.iso(asof)
     d = w.day
@@ -114,7 +127,8 @@ def build(view, head_sha, mode, w, asof, params, fetcher, with_memory=None, wake
         "files": [], "bars_h1": [], "bars_d1": [], "p_ref": None,
         "fx": None, "risk": None, "us2y": "unknown", "fresh": None, "sources": dict(SOURCES),
         "events": events.context_block(d), "d_ref": None, "levels": None,
-        "wake": wake_rule.context_block(wake) if wake else None, "memory": None,
+        "wake": wake_rule.context_block(wake) if wake else None,
+        "review": review_rule.block(review_open, w.entry_utc, []) if review_open else None, "memory": None,
         "status": "ok", "detail": None,
     }
 
@@ -230,13 +244,22 @@ def build(view, head_sha, mode, w, asof, params, fetcher, with_memory=None, wake
             lag = rec.parse_iso(prov["fetched_utc"]) - (newest[0] + dt.timedelta(seconds=60))
             ctx["fresh"] = {"bar_utc": rec.iso(newest[0]), "lag_s": int(lag.total_seconds())}
 
+    # the review's prices (R-AN-92, §16.18 A15): the last request; it never changes the status
+    if review_open and review_rule.needs_request(review_open, asof):
+        a, b = review_rule.request_range(review_open, asof)
+        prov, values = fetcher.fetch(review_rule.REQ, td.m30_url(a, b), "30min")
+        ctx["files"].append(prov)
+        bars = review_rule.used_bars(values, a, asof) if prov["status"] == "ok" else []
+        prov["bars"] = [td.bar_obj(v) for v in bars]
+        ctx["review"] = review_rule.block(review_open, w.entry_utc, bars)
+
     # D_ref (R-AN-21)
     block, detail = dref.compute(slots_b.decode("utf-8"), w.slot, d, asof_s, p_ref)
     ctx["d_ref"] = block
     if with_memory is None:
-        with_memory = mode == "live"
+        with_memory = mode == "live" or (mode == "canary" and paths.a15_applies(paths.read_mode(view), d))
     if with_memory:
-        ctx["memory"] = memory.build(view, d)
+        ctx["memory"] = memory.build(view, d, mode)
     if detail:
         return fail("no_call:d_ref", detail)
     # levels (R-AN-88): from the context's own bars, after D_ref, only when the status is ok

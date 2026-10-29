@@ -49,7 +49,7 @@ def test_ok_context_admission_and_shape():
     asof = dt.datetime(2026, 11, 10, 7, 20, 13, tzinfo=UTC)
     ctx, feed = build(world(w.day, dt.date(2026, 11, 9)), w, asof)
     assert ctx["status"] == "ok", ctx["detail"]
-    assert ctx["schema"] == "analyst-context/4"
+    assert ctx["schema"] == "analyst-context/5" and ctx["review"] is None            # §16.18 A15
     assert ctx["store"]["complete_utc"] == "2026-11-10T00:00:00Z"
     assert ctx["store"]["start_hist_utc"] == "2026-10-26T21:00:00Z"   # model 00:00 of 2026-10-27 (EDT)
     # eight requests, in R-AN-87's order (AUDJPY after USDCHF, before fresh), none with a key
@@ -106,7 +106,7 @@ def test_ok_context_admission_and_shape():
     keys = ["schema", "call_id", "mode", "window", "model_day", "entry_utc", "exit_utc", "deadline_utc",
             "entry_server", "exit_server", "asof_utc", "repo_head_sha", "params", "store", "files", "bars_h1",
             "bars_d1", "p_ref", "fx", "risk", "us2y", "fresh", "sources", "events", "d_ref", "levels", "wake",
-            "memory", "status", "detail"]                                # §16.18 A14: wake right after levels
+            "review", "memory", "status", "detail"]      # §16.18 A14: wake right after levels; A15: review after wake
     assert list(ctx) == keys
     json.dumps(ctx, allow_nan=False)
     assert context.context_sha256(ctx) == rec.compact_sha256(ctx)
@@ -120,7 +120,9 @@ def test_the_sources_note_is_exact():
                 "model day and are built from hourly bars made as bars_h1's are, but bars_h1 lists only the last 10 "
                 "of those days, so the older bars_d1 days come from Dukascopy store hours not shown in bars_h1; "
                 "Twelve Data and Dukascopy levels can differ slightly; settlement uses Dukascopy. wake values and "
-                "wake.bars_m30 come from Twelve Data 30-minute bars in UTC, labelled by their start."}   # §16.18 A14
+                "wake.bars_m30 come from Twelve Data 30-minute bars in UTC, labelled by their start. review prices "
+                "come from Twelve Data 30-minute bars in UTC and are indicative; settlement uses Dukascopy minutes, "
+                "where an open trade may already have reached its stop or target."}   # §16.18 A14, A15
 
 
 def test_forming_hour_boundary():

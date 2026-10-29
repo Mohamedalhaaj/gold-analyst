@@ -85,7 +85,8 @@ advice and it never trades. Nobody has shown that the analyst has an edge; the e
   read-only `git status` and `git log` forms of R-AN-86 (a)(iv) and a `PushNotification` (d). A runs export also gives
   `VIOLATION routine_project <name>` for a routine whose `project` is missing or not null, and a C20 record's verdict
   must agree with its `cc_version` (pass needs 2.1.295 or later).
-- `analyst/MODE.json` selects `canary` (records under `analyst/canary/`, never settled or shown), `live` or `off`.
+- `analyst/MODE.json` selects `canary` (records under `analyst/canary/`, never counted or shown; settled only from
+  `a15_from`), `live` or `off`.
 - Continuous watching (§16.18 A14, R-AN-89..R-AN-91), for model days on or after MODE.json `a14_from` (null: W1 and
   W2 only, as before). Two second looks at fixed times, W1b = W1 + 2 h and W2b = W2 + 2 h, and trigger windows
   `<model_day>_T<hhmm>`. A trigger fires when a fixed price condition holds at a 30-minute check: the price breaks
@@ -102,6 +103,24 @@ advice and it never trades. Nobody has shown that the analyst has an edge; the e
   push `window_order`, and closes W1, W2, W1b and W2b `skipped:trade_open` or `skipped:day_cap` when a gate held.
   The routine `analyst-wake` (an API trigger, no schedule) is fired by the watcher in `watcher/` (a Cloudflare
   Worker); `ROUTINE_PROMPT.md` and the guard are unchanged.
+- Trade management and learning in the canary (§16.18 A15, R-AN-92..R-AN-95), for model days on or after MODE.json
+  `a15_from` (null: A14 as above). An open trade no longer refuses or skips a window: `start`, the closer and the
+  watcher drop `trade_open`, and a window whose entry falls while one or two of the day's trades are open is a review.
+  `run_window.py context` reads the day's attempt, call and terminal files before its first request, builds the open
+  set with `analyst/ga/review.py` (one pure function shared by `context`, `lock`, settlement and the tests) and writes
+  `analyst-context/5`: `review` after `wake` (each open trade's side, times, stop and target in dollars, entry and
+  current Twelve Data prices, move in $ and R, high and low since entry, indicative touches, minutes left; the
+  options), from one more request, `XAUUSD_M30R`, the context's last. The plan is `analyst-plan/3`: in a review
+  hold, close, reverse or add (one open trade) or hold and close (two); `lock` refuses any other action
+  `action_not_allowed`, and hold and close lock as `review_hold` and `review_close`. analyst-settle settles a model
+  day as one unit after its end: a closed trade exits at the review's entry minute (reason `managed`) unless its
+  stop, target or gap came first; `analyst-settled/2` adds closed_by, managed_utc, x_end_utc, weight, cluster,
+  `unmanaged` and `reviews`. Overlapping trades weigh 0.5 and form clusters; n, the sums, P5, demotion and the
+  ledger are weighted, the e-process and K take one factor per cluster, and STATE.json is `analyst-state/2`.
+  Canary days from a15_from are settled the same way under `analyst/canary/` (class `canary`, never counted or shown),
+  canary lessons come from those records instead of the fixture, canary contexts show canary memory, and the canary
+  revision runs on canary lessons. `analyst/prompts/system.md` has the review section; `ROUTINE_PROMPT.md`, the guard,
+  lesson.md and revision.md are unchanged.
 
 ## Layout
 - `analyst/ga/`: the frozen code (session scripts, probes, context, D_ref, merge, settlement, state). The session uses

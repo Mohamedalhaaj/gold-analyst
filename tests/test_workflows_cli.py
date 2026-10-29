@@ -181,7 +181,9 @@ def test_cli_start_in_a_local_world(tmp_path):
                          text=True, env={"PATH": "/usr/bin:/bin:/opt/homebrew/bin", "HOME": str(tmp_path),
                                          "GIT_AUTHOR_NAME": "t", "GIT_COMMITTER_NAME": "t"})
     assert out.returncode == 0, out.stdout + out.stderr
-    assert re.fullmatch(r"(refused \S+|attempt_pushed \S+ n=1 mode=canary)\n", out.stdout), out.stdout
+    # a trigger candidate's refusal has two words (`refused wake_data td_<reason>`, R-AN-90): at a check time of an A14
+    # day this real-clock start asks Twelve Data without a key
+    assert re.fullmatch(r"(refused \S+( td_\S+)?|attempt_pushed \S+ n=1 mode=canary)\n", out.stdout), out.stdout
 
 
 def test_exam_lock(tmp_path):

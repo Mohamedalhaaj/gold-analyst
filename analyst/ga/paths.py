@@ -59,12 +59,13 @@ def revision_record_path(mode, iso_week):
     return f"{prefix(mode)}revisions/{iso_week}.json"
 
 
-def settled_path(call_id):
-    return f"analyst/settled/{call_id}.json"
+def settled_path(call_id, mode="live"):
+    """`analyst/settled/<call_id>.json`; a canary settled record (§16.18 A15, R-AN-95) is under analyst/canary/."""
+    return f"{prefix(mode)}settled/{call_id}.json"
 
 
-def twin_path(call_id):
-    return f"analyst/twins/{call_id}.json"
+def twin_path(call_id, mode="live"):
+    return f"{prefix(mode)}twins/{call_id}.json"
 
 
 def state_event_path(seq):
@@ -102,6 +103,20 @@ def a14_from(mode_doc):
 
 def a14_applies(mode_doc, day):
     a = a14_from(mode_doc)
+    return a is not None and day >= a
+
+
+def a15_from(mode_doc):
+    """MODE.json `a15_from` as a date, or None (§16.18 A15, R-AN-5): the first model day with reviews, managed exits,
+    overlap weights and canary settlement and learning (R-AN-92 to R-AN-95). Its validity (a14_from set, a15_from >=
+    a14_from, the build and the watcher on inbox main the evening before) is the judge's A15 `a15_from` check; the
+    code applies the value as written, as it does a14_from."""
+    v = (mode_doc or {}).get("a15_from")
+    return dt.date.fromisoformat(v) if v else None
+
+
+def a15_applies(mode_doc, day):
+    a = a15_from(mode_doc)
     return a is not None and day >= a
 
 

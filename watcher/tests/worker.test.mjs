@@ -110,6 +110,21 @@ test("open trade: read from the call branch before the merge; exit = entry of th
   assert.equal((await check(c, `${D}T09:30:00Z`)).decision, "trade_open");
 });
 
+test("A15: from a15_from no check is `trade_open` and no call file is read; before it the A14 rule holds", async () => {
+  const world = new World({ bars: BARS, a15_from: D });
+  world.wake(win("W1"), null, true); // a buy or a sell, open until 12:00
+  const a = await check(world, `${D}T09:30:00Z`); // W1b during W1's trade: fired, a review in its session
+  assert.deepEqual([a.decision, a.fired], ["W1b", true]);
+  const callReads = world.requests.filter((r) => r.url.includes("/calls/"));
+  assert.equal(callReads.length, 0);
+  const c = new World({ bars: BARS, a15_from: D });
+  onMain(c, win("W1"), "called", { terminal: true });
+  assert.equal((await check(c, `${D}T09:30:00Z`)).decision, "W1b");
+  const before = new World({ bars: BARS, a15_from: "2026-11-05" }); // a15_from later than the day: A14
+  before.wake(win("W1"), null, true);
+  assert.equal((await check(before, `${D}T09:30:00Z`)).decision, "trade_open");
+});
+
 async function seedTriggers(world, checks, withAttempts) {
   const entries = checks.map((t) => ({ check_utc: t, model_day: D, decision: "trigger:y_low", fired: true,
     http: 200, tries: 1, utc: t }));

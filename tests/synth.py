@@ -129,11 +129,13 @@ def repo_files(extra=None):
     return files
 
 
-def mode_json(mode="canary", canary_from="2026-10-19", canary_to=None, live_from=None, a14_from=None):
+def mode_json(mode="canary", canary_from="2026-10-19", canary_to=None, live_from=None, a14_from=None, a15_from=None):
     doc = {"mode": mode, "canary_from": canary_from, "canary_to": canary_to, "live_from": live_from,
            "set_utc": "2026-10-01T00:00:00Z", "note": "test"}
     if a14_from:
         doc["a14_from"] = a14_from
+    if a15_from:
+        doc["a15_from"] = a15_from
     return json.dumps(doc).encode()
 
 

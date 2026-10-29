@@ -6,6 +6,13 @@ Every time in `self_reported` is informational only (prereg M1): lock evidence i
 `call_id`: {kind, reason, check_utc, td} for a call attempt (kind from the call_id; reason null unless a trigger,
 then one of the five conditions; check_utc = entry − 30 min; td null unless a trigger, then the XAUUSD_M30
 provenance object), null in a lesson or revision attempt. analyst-merge accepts `/1` (W1 and W2 only) and `/2`.
+
+§16.18 A15 (R-AN-29, R-AN-33): with an `analyst-context/5` context the call stays `analyst-call/1`; its status is
+`called` for buy, sell, reverse and add, `stay_out` for stay_out, `review_hold` for hold, `review_close` for close,
+or a `no_call:*`; side, the multiples, S, T, S_dimes and T_dimes are set for every `called` call (reverse and add by
+plan.side_of from the context's `review`) and are as for stay_out otherwise. A call is not valid when its status does
+not follow from its plan by that mapping, or when it has a review status or action without an `analyst-context/5`
+context; the merge does not recompute the open set (the judge does).
 """
 import os
 import shutil
@@ -22,7 +29,11 @@ PROV_KEYS = {"src", "req", "url", "http", "td_code", "status", "reason", "bytes"
 CALL_SCHEMA = "analyst-call/1"
 LESSON_SCHEMA = "analyst-lesson/1"
 NOTE = "self-reported, unverified"
-CALL_STATUSES = ("called", "stay_out", "no_call:data", "no_call:d_ref", "no_call:invalid", "no_call:refusal")
+CALL_STATUSES = ("called", "stay_out", "no_call:data", "no_call:d_ref", "no_call:invalid", "no_call:refusal",
+                 "review_hold", "review_close")
+REVIEW_CONTEXT = "analyst-context/5"
+PLAN_ACTIONS = {"called": ("buy", "sell", "reverse", "add"), "stay_out": ("stay_out",), "review_hold": ("hold",),
+                "review_close": ("close",)}
 SESSION_ENV = ("CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID", "SESSION_ID")
 MODEL_ENV = ("CLAUDE_CODE_MODEL", "ANTHROPIC_MODEL", "CLAUDE_MODEL")
 
@@ -103,9 +114,9 @@ def call(ctx, ctx_sha, attempt_n, status, plan_obj, plan_sha, failures, playbook
     if status == "called":
         cents = ctx["d_ref"]["D_ref_cents"]
         s_d, t_d, s, t = plan.s_and_t(cents, plan_obj["stop_mult"], plan_obj["target_mult"])
-        out.update(side=plan.side_of(plan_obj["action"]), stop_mult=plan_obj["stop_mult"],
+        out.update(side=plan.side_of(plan_obj["action"], ctx.get("review")), stop_mult=plan_obj["stop_mult"],
                    target_mult=plan_obj["target_mult"], S=s, T=t, S_dimes=s_d, T_dimes=t_d)
-    elif status == "stay_out":
+    elif status in ("stay_out", "review_hold", "review_close"):
         out["side"] = 0
     if canary_probe is not None:
         out["canary_probe"] = canary_probe
@@ -167,14 +178,15 @@ def valid_call(doc):
         return False
     if ctx.get("call_id") != doc["call_id"] or ctx.get("asof_utc") != doc["decision_utc"]:
         return False
-    if doc["status"] in ("called", "stay_out"):
+    if doc["status"] in PLAN_ACTIONS:
         if ctx.get("status") != "ok" or not isinstance(doc["plan"], dict):
             return False
-        want = "stay_out" if doc["status"] == "stay_out" else None
-        if want and doc["plan"].get("action") != "stay_out":
+        if doc["plan"].get("action") not in PLAN_ACTIONS[doc["status"]]:
             return False
-        if doc["status"] == "called" and doc["plan"].get("action") not in ("buy", "sell"):
-            return False
+    action = doc["plan"].get("action") if isinstance(doc["plan"], dict) else None
+    if (doc["status"] in ("review_hold", "review_close") or action in ("hold", "close", "reverse", "add")) \
+            and ctx.get("schema") != REVIEW_CONTEXT:
+        return False
     if doc["status"] in ("no_call:data", "no_call:d_ref") and ctx.get("status") != doc["status"]:
         return False
     return True
