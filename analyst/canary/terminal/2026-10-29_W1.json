@@ -1,0 +1,18 @@
+{
+ "attempts": [],
+ "call": null,
+ "call_id": "2026-10-29_W1",
+ "deadline_utc": "2026-10-29T07:45:00Z",
+ "detail": "2026-10-29_T0600",
+ "entry_utc": "2026-10-29T08:00:00Z",
+ "head_sha": "34516b097fca95ae38854e9ad666c000ca8766b3",
+ "mode": "canary",
+ "model_day": "2026-10-29",
+ "prev_chain_sha256": "6faafefe82af9dd42e99f9fed90a4ce03b2a28925b4bc00658f28d92ad9b3375",
+ "run_id": 40845141014,
+ "schema": "analyst-terminal/1",
+ "status": "skipped:trade_open",
+ "window": "W1",
+ "writer": "closer",
+ "written_utc": "2026-10-29T08:51:19Z"
+}
