@@ -14,8 +14,10 @@ for model days d >= a15_from, the memory is built by the same rules from the can
 analyst/canary/settled/, `lessons` from analyst/canary/lessons/ with status ok whose call_id has a canary settled
 record (so no lesson of the fixture appears), `pending` from canary terminals `called` of model days >= a15_from
 without a canary settled record, and `playbook` the canary version in force: the largest k with k = 0, or an
-analyst/canary/revisions/*.json record with status written, version k and a15_from <= effective_from <= d (text
-analyst/canary/playbooks/v<k>.md; v0 is analyst/playbooks/v0.md). Live is unchanged.
+analyst/canary/revisions/*.json record with status written, version k and a15_from < effective_from <= d (text
+analyst/canary/playbooks/v<k>.md; v0 is analyst/playbooks/v0.md). Live is unchanged. (A15-D22) A canary revision
+effective on a15_from or earlier was written on a Saturday before a15_from, from the fixture's lesson or from no canary
+record: it is never in force.
 """
 import datetime as dt
 
@@ -40,8 +42,9 @@ def _by_window(view, prefix):
 
 
 def playbook_in_force(view, day, mode="live"):
-    """R-AN-50: the version in force on model day `day`. In canary mode only revisions effective on or after
-    a15_from count (§16.18 A15); without a15_from a canary playbook is never in force."""
+    """R-AN-50: the version in force on model day `day` (None: the newest version that is or will be in force). In
+    canary mode only revisions effective after a15_from count (§16.18 A15, A15-D22); without a15_from a canary
+    playbook is never in force."""
     k_best = 0
     a15 = paths.a15_from(paths.read_mode(view)) if mode == "canary" else None
     for p in view.list(f"{paths.prefix(mode)}revisions/"):
@@ -49,9 +52,9 @@ def playbook_in_force(view, day, mode="live"):
         if not r or r.get("status") != "written" or not r.get("effective_from"):
             continue
         eff = dt.date.fromisoformat(r["effective_from"])
-        if mode == "canary" and (a15 is None or eff < a15):
+        if mode == "canary" and (a15 is None or eff <= a15):
             continue
-        if eff <= day:
+        if day is None or eff <= day:
             k_best = max(k_best, int(r["version"]))
     path = paths.playbook_path(mode, k_best)
     b = view.read(path)

@@ -374,6 +374,37 @@ def test_canary_memory_playbook_and_week():
     assert [x["call_id"] for x in inp["lessons"]] == [f"{D}_W1"] and inp["settled"][0]["action"] == "reverse"
 
 
+def test_canary_revision_effective_on_a15_from_is_never_in_force_nor_a_base():
+    """A15-D22: a canary revision written on Saturday 2026-10-31, before a15_from was set (from the fixture's lesson),
+    takes effect on Monday 2026-11-02 = a15_from. It is never in force, the next canary revision starts from v0, and
+    its number is not reused; a revision effective after a15_from is in force and is the next base."""
+    files = {paths.MODE_PATH: json.dumps({"mode": "canary", "canary_from": "2026-10-26", "a14_from": "2026-10-29",
+                                          "a15_from": "2026-11-02"}),
+             "analyst/playbooks/v0.md": "# playbook v0\n",
+             f"{P}playbooks/v1.md": "# playbook v1\nfrom the fixture lesson\n",
+             f"{P}revisions/2026-W44.json": json.dumps({"status": "written", "version": 1,
+                                                        "effective_from": "2026-11-02"})}
+    view = DictView(files)
+    for d in (dt.date(2026, 11, 2), dt.date(2026, 11, 3), dt.date(2026, 11, 9)):
+        pb = memory.playbook_in_force(view, d, "canary")
+        assert (pb["version"], pb["path"], pb["text"]) == (0, "analyst/playbooks/v0.md", "# playbook v0\n")
+    assert memory.build(view, dt.date(2026, 11, 3), "canary")["playbook"]["version"] == 0
+    k = weekly.newest_playbook(view, "canary")
+    assert k == 1                                                 # numbering: v1 exists, so the next file is v2
+    inp = weekly.revision_input(view, "canary", k)
+    assert inp["playbook"] == {"version": 0, "text": "# playbook v0\n"} and inp["next_version"] == 2
+    view.files[f"{P}playbooks/v2.md"] = b"# playbook v2\nreal\n"
+    view.files[f"{P}revisions/2026-W45.json"] = json.dumps({"status": "written", "version": 2,
+                                                            "effective_from": "2026-11-09"}).encode()
+    assert memory.playbook_in_force(view, dt.date(2026, 11, 6), "canary")["version"] == 0
+    assert memory.playbook_in_force(view, dt.date(2026, 11, 9), "canary")["version"] == 2
+    inp = weekly.revision_input(view, "canary", weekly.newest_playbook(view, "canary"))
+    assert inp["playbook"] == {"version": 2, "text": "# playbook v2\nreal\n"} and inp["next_version"] == 3
+    # without a15_from (the A14 canary) and in live the base is the newest version, as before
+    view.files[paths.MODE_PATH] = json.dumps({"mode": "canary", "canary_from": "2026-10-26"}).encode()
+    assert weekly.revision_input(view, "canary", 2)["playbook"]["version"] == 2
+
+
 # ---------------------------------------------------------------- the sessions and the merge (local inbox world)
 def m30_1029(t):
     """Flat 30-minute bars; each model day's first bar is wide (R20 = 20, y_l = 3990); the 05:30 bar of 2026-10-29
