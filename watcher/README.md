@@ -23,7 +23,9 @@ the day before to L_d = 16:30 UTC on EDT, 17:30 on EST). Then:
    (`raw.githubusercontent.com/Mohamedalhaaj/gold-analyst-inbox/refs/heads/main/...`), and for W1, W2, W1b, W2b and the
    trigger windows it fired on d (from its own log), each with a check earlier than T: the terminal on main, the n = 1
    attempt record and the call file on main, else on their `claude/analyst-<mode>-attempt-…-1` and
-   `claude/analyst-<mode>-call-…` branches. A failed read counts as absent. From them it forms E(T) and O(T).
+   `claude/analyst-<mode>-call-…` branches. A failed read counts as absent. From them it forms E(T) and O(T); for
+   model days >= MODE.json `a15_from` (§16.18 A15) it reads no call file and forms no O(T), so `trade_open` never
+   occurs: a window during an open trade is fired like any other and becomes a review in its session.
 2. `mode_off` or `calls_disabled` → no fire. Otherwise R(T): `trade_open`, `day_cap`, W1/W2 (`fixed`, their own
    routines fire them), W1b/W2b (fire, no Twelve Data request), a holiday day or g(T) < 60 (`none`), else one Twelve
    Data request (R-AN-90's URL, `Authorization: apikey …`, R-AN-87's User-Agent, at most 2 tries, the second only after

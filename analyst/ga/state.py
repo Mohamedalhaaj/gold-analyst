@@ -28,6 +28,16 @@ Interpretation (logged for the register): a judge subject is mirrored when ANY o
 Interpretation (sixth review, logged for the register): a cleared live pause whose clear row is no longer in
 ADJUDICATIONS.csv (an append-only file edited by hand) takes its RESUMED event's utc as its clear time, the latest
 time it can have, so a lost row never makes an earlier key retire the analyst.
+
+§16.18 A15 (R-AN-51..R-AN-58, R-AN-94): each counted trade carries the weight and cluster of its settled record (1.0
+and its own call_id for a record without them). The count n = Σ w_i (P2, n150, STATE `n`, a multiple of 0.5 as a
+float); every trade sum is Σ w_i·x_i (P3, P4, P5, D2, n150's Σ R); the e-process and K take one factor per cluster,
+in the order of their first trades, with y_C = Σ w_i·y_i / Σ w_i over the cluster's counted trades; P5 drops the best
+cluster; the side share is weighted; D3 is tested at the first post-promotion trade at which the cumulative post
+weight reaches 100, 200, ... STATE.json is `analyst-state/2`: `n` weighted, then `n_trades` and `n_clusters`. The
+ledger has `n_w` after `trade_no` and `weight, cluster, x_end_utc, closed_by` after `y`; E and K are written on each
+cluster's last counted row (every counted row for a trade before a15_from, its own cluster). μ_W and the twins stay
+unweighted.
 """
 import csv
 import datetime as dt
@@ -39,7 +49,7 @@ E_STAR = 400.0
 ALPHA = 0.0025
 MODEL = "claude-opus-5-5"
 EVENT_SCHEMA = "analyst-state-event/1"
-STATE_SCHEMA = "analyst-state/1"
+STATE_SCHEMA = "analyst-state/2"
 VERDICT_SCHEMA = "analyst-verdict/1"
 VERDICT_VALUES = ("SOUND", "WARNING", "VIOLATION")
 FRESH_BEFORE = dt.timedelta(hours=48)       # a verdict older than this before the run is not fresh (R-AN-70, N2)
@@ -51,10 +61,14 @@ OPERATIONAL_A12 = ("probe_failed", "app_scope", "routine_connectors", "inbox_ide
 # the session guard not acting, or its files (§16.18 A7); a routine in a claude.ai project, or a harness that may not
 # keep the guard closed (its third review, decisions 21 and 22)
 OPERATIONAL_A13 = ("guard_not_enforced", "guard_config", "routine_project", "cc_version_below", "cc_version_unknown")
+# A14's table (skipped_wrong, a14_from) and A15's open sets, cap, pairing day, lesson source (R-AN-55, §16.18 A15)
+OPERATIONAL_A14 = ("skipped_wrong", "a14_from")
+OPERATIONAL_A15 = ("review_open", "open_cap", "a15_from", "lesson_source")
 LEDGER_COLS = ["call_id", "model_day", "window", "class", "terminal_status", "status", "detail", "action", "side",
                "stop_mult", "target_mult", "confidence", "D_ref", "S", "T", "lock_utc", "attempts", "entry_utc",
                "exit_utc", "P_e", "X", "Tg", "exit_minute_utc", "P_x", "reason", "fill", "gross_usd", "cost_usd",
-               "net_usd", "stress_net_usd", "R", "R_stress", "y", "trade_no", "E", "K", "d_W", "twin_status",
+               "net_usd", "stress_net_usd", "R", "R_stress", "y", "weight", "cluster", "x_end_utc", "closed_by",
+               "trade_no", "n_w", "E", "K", "d_W", "twin_status",
                "opp_net_usd", "opp_R", "settled_utc", "terminal_sha256", "call_sha256", "settled_sha256"]
 
 
@@ -173,13 +187,16 @@ def operational(key):
     the owner's own configuration; since §16.18 A7 also the session guard not acting or its files wrong (A13
     guard_not_enforced, guard_config), and since its third review a routine in a claude.ai project or a guarded
     session on a Claude Code version below the guard's minimum or of an unknown version (A13 routine_project,
-    cc_version_below, cc_version_unknown). It pauses while the verdict carries it and never retires the analyst. A13
+    cc_version_below, cc_version_unknown); since §16.18 A15 also A14 skipped_wrong and a14_from and A15 review_open,
+    open_cap, a15_from and lesson_source. It pauses while the verdict carries it and never retires the analyst. A13
     forbidden_attempt and forbidden_executed are integrity keys."""
     if key.startswith(("A0|", "system_error:")):
         return True
     parts = key.split("|")
     return len(parts) >= 2 and ((parts[0] == "A12" and parts[1] in OPERATIONAL_A12)
-                                or (parts[0] == "A13" and parts[1] in OPERATIONAL_A13))
+                                or (parts[0] == "A13" and parts[1] in OPERATIONAL_A13)
+                                or (parts[0] == "A14" and parts[1] in OPERATIONAL_A14)
+                                or (parts[0] == "A15" and parts[1] in OPERATIONAL_A15))
 
 
 def period_starts(mode_doc):
@@ -234,30 +251,68 @@ def counted(rows):
             and not r["overlay"] and r["settled"] is not None]
 
 
+def weight(r):
+    """A counted trade's weight (R-AN-94): its settled record's, 1.0 before a15_from."""
+    w = r["settled"].get("weight")
+    return 1.0 if w is None else float(w)
+
+
+def cluster_of(r):
+    return r["settled"].get("cluster") or r["cid"]
+
+
+def clusters(ct):
+    """The clusters of the counted trades `ct` (window order), in the order of their first trades: [[row, ...]]."""
+    out, idx = [], {}
+    for r in ct:
+        c = cluster_of(r)
+        if c not in idx:
+            idx[c] = len(out)
+            out.append([])
+        out[idx[c]].append(r)
+    return out
+
+
+def cluster_y(cl):
+    """y_C = Σ w_i·y_i / Σ w_i (R-AN-94)."""
+    return sum(weight(r) * r["settled"]["outcome"]["y"] for r in cl) / sum(weight(r) for r in cl)
+
+
+def wsum(ct, f):
+    return sum(weight(r) * f(r) for r in ct)
+
+
+def e_of(ct):
+    return _eproc().e_value([cluster_y(cl) for cl in clusters(ct)])
+
+
+def k_of(ct):
+    return _eproc().k_value([cluster_y(cl) for cl in clusters(ct)])
+
+
 def promotion(rows, first_day, e, verdict):
     """(checks dict, all) at model day e."""
     ct = counted([r for r in rows if r["day"] <= e])
-    n = len(ct)
-    y = [r["settled"]["outcome"]["y"] for r in ct]
-    E = _eproc().e_value(y)
+    n = float(sum(weight(r) for r in ct))
+    E = e_of(ct)
     out = {"n": n, "E": E}
     out["P1"] = E >= E_STAR
-    out["P2"] = n >= 60 and (ct[-1]["day"] - ct[0]["day"]).days >= 56 if n else False
-    st = [r["settled"]["outcome"]["stress_net_usd"] for r in ct]
-    cost = [r["settled"]["outcome"]["cost_usd"] for r in ct]
-    out["P3"] = bool(n) and sum(st) > 0 and sum(s - 0.5 * c for s, c in zip(st, cost)) > 0
+    out["P2"] = n >= 60 and (ct[-1]["day"] - ct[0]["day"]).days >= 56 if ct else False
+    st = wsum(ct, lambda r: r["settled"]["outcome"]["stress_net_usd"])
+    st_c = wsum(ct, lambda r: r["settled"]["outcome"]["stress_net_usd"] - 0.5 * r["settled"]["outcome"]["cost_usd"])
+    out["P3"] = bool(ct) and st > 0 and st_c > 0
     mu = {}
     # W1, W2, and W1b, W2b and T once they occur (§16.18 A14, R-AN-47, R-AN-53)
     for W in [x for x in clock.WINDOW_TYPES if x in clock.WINDOWS or any(r["W"] == x for r in rows)]:
         tw = [r["twin"]["d_W"] for r in rows if r["W"] == W and r["twin"] and r["twin"]["status"] == "final"
               and first_day is not None and first_day <= r["day"] <= e]
         mu[W] = sum(tw) / len(tw) if tw else None
-    if n and all(mu[r["W"]] is not None for r in ct):
-        out["P4"] = sum(r["settled"]["outcome"]["net_usd"] - r["settled"]["side"] * mu[r["W"]] for r in ct) > 0
+    if ct and all(mu[r["W"]] is not None for r in ct):
+        out["P4"] = wsum(ct, lambda r: r["settled"]["outcome"]["net_usd"] - r["settled"]["side"] * mu[r["W"]]) > 0
     else:
         out["P4"] = False
-    R = [r["settled"]["outcome"]["R"] for r in ct]
-    out["P5"] = bool(n) and sum(R) - max(R) > 0
+    R_of = (lambda r: r["settled"]["outcome"]["R"])
+    out["P5"] = bool(ct) and wsum(ct, R_of) - max(wsum(cl, R_of) for cl in clusters(ct)) > 0
     out["P7"] = verdict is not None and verdict.get("analyst_verdict") in ("SOUND", "WARNING")   # a fresh one
     out["mu"] = mu
     out["all"] = all(out[k] for k in ("P1", "P2", "P3", "P4", "P5", "P7"))
@@ -392,12 +447,12 @@ def run_state(view, processed_days, now, run_id, head_sha, verdict, write):
         chk = promotion(rows, first_day, e, verdict_p7)
         E = chk["E"]
         ct = counted([r for r in rows if r["day"] <= e])
-        R = [r["settled"]["outcome"]["R"] for r in ct]
+        sum_R = wsum(ct, lambda r: r["settled"]["outcome"]["R"])
         if state == "TESTING":
             if chk["all"]:
                 emit("PROMOTED", "P1-P5,P7", e, chk["n"], E, 1.0)
                 state, promoted_day = "PROMOTED", e
-            elif chk["n"] >= 150 and sum(R) <= 0:
+            elif chk["n"] >= 150 and sum_R <= 0:
                 emit("RETIRED", "n150", e, chk["n"], E, None)
                 state = "RETIRED"
             elif e >= clock.add_months(first_day, 12):
@@ -405,19 +460,24 @@ def run_state(view, processed_days, now, run_id, head_sha, verdict, write):
                 state = "RETIRED"
         elif state == "PROMOTED":
             post = [r for r in ct if r["day"] > promoted_day]
-            py = [r["settled"]["outcome"]["y"] for r in post]
-            pR = [r["settled"]["outcome"]["R"] for r in post]
-            K = _eproc().k_value(py)
+            K = k_of(post)
             reason = None
             if K >= 10:
                 reason = "D1"
-            elif pR and sum(pR) <= -5:
+            elif post and wsum(post, lambda r: r["settled"]["outcome"]["R"]) <= -5:
                 reason = "D2"
             else:
-                for mm in range(100, len(pR) + 1, 100):
-                    if sum(pR[:mm]) <= 0:
-                        reason = "D3"
-                        break
+                cw = cr = 0.0
+                mm = 100
+                for r in post:                     # D3 at the first trade whose cumulative weight reaches m
+                    cw += weight(r)
+                    cr += weight(r) * r["settled"]["outcome"]["R"]
+                    if cw >= mm:
+                        if cr <= 0:
+                            reason = "D3"
+                            break
+                        while cw >= mm:
+                            mm += 100
             if reason:
                 emit("DEMOTED", reason, e, chk["n"], E, K)
                 state, demoted_day = "DEMOTED", e
@@ -427,18 +487,19 @@ def run_state(view, processed_days, now, run_id, head_sha, verdict, write):
                 state = "RETIRED"
     rows_all, _ = collect(view, now.date(), overlays)
     ct = counted(rows_all)
-    y = [r["settled"]["outcome"]["y"] for r in ct]
-    E = _eproc().e_value(y)
+    E = e_of(ct)
     # K over post-promotion counted trades; 1.0 before a promotion (R-AN-52 clarification A4, as lab R-V1-34)
-    K = _eproc().k_value([r["settled"]["outcome"]["y"] for r in ct if r["day"] > promoted_day]) if promoted_day else 1.0
+    K = k_of([r for r in ct if r["day"] > promoted_day]) if promoted_day else 1.0
     term = [r for r in rows_all if not r["terminal"]["status"].startswith("skipped:")][-40:]
     bad = [r for r in term if r["overlay"] or r["terminal"]["status"].startswith(("missed:", "no_call:"))]
     share = len(bad) / len(term) if term else 0.0
-    sides = [r["settled"]["side"] for r in ct]
-    side_share = max(sides.count(1), sides.count(-1)) / len(sides) if sides else None
+    tot = sum(weight(r) for r in ct)
+    up = sum(weight(r) for r in ct if r["settled"]["side"] == 1)
+    side_share = max(up, tot - up) / tot if ct else None
     return {"schema": STATE_SCHEMA, "asof_utc": rec.iso(now), "state": state,
             "calls_enabled": state != "RETIRED" and not pauses, "pause_reasons": sorted(pauses),
-            "paused_display": share > 0.15, "missed_share_40": share, "n": len(ct), "E": E, "E_star": E_STAR, "K": K,
+            "paused_display": share > 0.15, "missed_share_40": share, "n": float(tot),
+            "n_trades": len(ct), "n_clusters": len(clusters(ct)), "E": E, "E_star": E_STAR, "K": K,
             "first_day": first_day.isoformat() if first_day else None,
             "last_processed_day": max(processed_days).isoformat() if processed_days else
             (view.read_json(paths.STATE_PATH) or {}).get("last_processed_day"),
@@ -463,28 +524,34 @@ def _num(x):
 def ledger_csv(view, now):
     overlays, _ = model_overlays(view)
     rows, _first = collect(view, now.date(), overlays)
-    ct_ids = {r["cid"] for r in counted(rows)}
+    ct_all = counted(rows)
+    ct_ids = {r["cid"] for r in ct_all}
+    last_of_cluster = {cl[-1]["cid"] for cl in clusters(ct_all)}
     out = io.StringIO()
     wr = csv.writer(out, lineterminator="\n")
     wr.writerow(LEDGER_COLS)
-    ys, trade_no = [], 0
+    trade_no, n_w = 0, 0.0
     promo = [e for e in events(view) if e["event"] == "PROMOTED"]
     pday = dt.date.fromisoformat(promo[0]["model_day"]) if promo else None
-    post = []
+    seen, post = [], []
     for r in rows:
         t, c, s, tw = r["terminal"], r["call"] or {}, r["settled"], r["twin"]
         o = (s or {}).get("outcome") or {}
         opp = (s or {}).get("opposite") or {}
         plan_ = c.get("plan") or {}
         cnt = r["cid"] in ct_ids
-        tn = E = K = None
+        tn = nw = E = K = None
         if cnt:
             trade_no += 1
-            ys.append(o["y"])
-            tn, E = trade_no, _eproc().e_value(ys)
+            n_w += weight(r)
+            tn, nw = trade_no, n_w
+            seen.append(r)
             if pday and r["day"] > pday:
-                post.append(o["y"])
-                K = _eproc().k_value(post)
+                post.append(r)
+            if r["cid"] in last_of_cluster:                  # E and K on a cluster's last counted row (R-AN-58)
+                E = e_of(seen)
+                if pday and r["day"] > pday:
+                    K = k_of(post)
         status = "no_call:model" if r["overlay"] else t["status"]
         wr.writerow([r["cid"], r["day"].isoformat(), r["W"], r["class"], t["status"], status, t.get("detail") or "",
                      plan_.get("action") or "", _num(c.get("side")), _num(c.get("stop_mult")),
@@ -495,7 +562,9 @@ def ledger_csv(view, now):
                      _num(o.get("Tg")), o.get("exit_minute_utc") or "", _num(o.get("P_x")), o.get("reason") or "",
                      o.get("fill") or "", _num(o.get("gross_usd")), _num(o.get("cost_usd")), _num(o.get("net_usd")),
                      _num(o.get("stress_net_usd")), _num(o.get("R")), _num(o.get("R_stress")), _num(o.get("y")),
-                     _num(tn), _num(E), _num(K), _num((tw or {}).get("d_W")), (tw or {}).get("status") or "",
+                     _num((s or {}).get("weight")), (s or {}).get("cluster") or "", (s or {}).get("x_end_utc") or "",
+                     (s or {}).get("closed_by") or "",
+                     _num(tn), _num(nw), _num(E), _num(K), _num((tw or {}).get("d_W")), (tw or {}).get("status") or "",
                      _num(opp.get("net_usd")), _num(opp.get("R")), (s or {}).get("settled_utc") or "",
                      r["terminal_sha256"], r["call_sha256"] or "", r["settled_sha256"] or ""])
     return out.getvalue().encode("utf-8")

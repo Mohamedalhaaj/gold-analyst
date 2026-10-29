@@ -19,6 +19,15 @@ draw by `trade_open` and `day_cap` (R-AN-89 steps 1-2, read from origin/main and
 call branches of the model day), and for a trigger candidate makes the XAUUSD_M30 request at or after T + 130 s
 (`wake_data`) and recomputes R(T) from it (`not_triggered`). The attempt record carries `wake`; a second draw copies
 it from its first attempt record and is not gated again.
+
+§16.18 A15 (R-AN-90, R-AN-92, R-AN-95): for model days >= MODE.json a15_from `start` does not apply `trade_open` (R(T)
+without step 1); `context` reads the day's attempt, call and terminal files once more, before its first Twelve Data
+request, builds the open set O(R) by ga/review.open_sets and passes it to the context (the `review` block and the
+`XAUUSD_M30R` request; a failed read is `error day_read`, exit 1, no call file); `lock` validates `analyst-plan/3`
+for an `analyst-context/5` context and refuses an action outside the context's options (`action_not_allowed`, a
+validation failure counted toward the cap of 3); hold and close lock as `review_hold` and `review_close`. In canary
+mode, in a run on or after a15_from 00:00:00Z, `lesson-start` takes the pending canary settled records instead of the
+fixture, and the canary revision reads the canary records; the canary playbook in force follows R-AN-50's A15 rule.
 """
 import datetime as dt
 import json
@@ -27,7 +36,7 @@ import re
 import time
 from pathlib import Path
 
-from . import clock, context, gitops, memory, paths, plan, probes, rec, records, tables, td, wake, witness
+from . import clock, context, gitops, memory, paths, plan, probes, rec, records, review, tables, td, wake, witness
 from .repo import GitView
 
 WORK_DIRNAME = ".analyst_run"
@@ -234,6 +243,8 @@ class Session:
         if not paths.a14_applies(mode_doc, w.day):
             return w, n, records.wake_of(w)
         wakes, trades = self.day_windows(view, mode, w.day)
+        if paths.a15_applies(mode_doc, w.day):
+            trades = []                              # R(T) without step 1: open trades never gate (§16.18 A15)
         T = w.check_utc
         if wake.open_trades(trades, T):
             raise Refusal("trade_open")
@@ -270,6 +281,37 @@ class Session:
         the windows with an attempt, [{call_id, check_utc, exit_utc}] of those whose call is a buy or a sell). Read
         from origin/main and from the inbox's attempt and call branches of d whose file is not on main; a failed read
         raises DayReadFailed."""
+        att, calls, terms = self.day_files(view, mode, d)
+        wakes = []
+        for cid in sorted({c for c, _n in att}, key=clock.window_key):
+            w = clock.window_of(cid)
+            docs = [att[k] for k in sorted(att) if k[0] == cid]
+            reason = next((x["wake"].get("reason") for x in docs
+                           if isinstance(x, dict) and isinstance(x.get("wake"), dict)), None)
+            wakes.append({"call_id": cid, "check_utc": w.check_utc, "kind": w.kind, "reason": reason})
+        trades = []
+        for cid in sorted(set(calls) | set(terms), key=clock.window_key):
+            doc = terms.get(cid) if cid in terms else calls.get(cid)
+            if isinstance(doc, dict) and doc.get("status") == "called":
+                w = clock.window_of(cid)
+                trades.append({"call_id": cid, "check_utc": w.check_utc, "exit_utc": w.exit_utc})
+        return wakes, trades
+
+    def review_entries(self, view, mode, d):
+        """R-AN-92's reading for `context`: the open_sets entries of model day d's windows that have a call or a
+        terminal, in window order. A window's call status is its terminal's on origin/main, else its call file's on
+        origin/main, else on its call branch; a failed read raises DayReadFailed."""
+        _att, calls, terms = self.day_files(view, mode, d)
+        out = []
+        for cid in sorted(set(calls) | set(terms), key=clock.window_key):
+            doc = terms.get(cid) if cid in terms else calls.get(cid)
+            status = doc.get("status") if isinstance(doc, dict) else None
+            out.append(review.entry_from_call(cid, clock.window_of(cid), status, calls.get(cid)))
+        return out
+
+    def day_files(self, view, mode, d):
+        """({(call_id, n): attempt}, {call_id: call}, {call_id: terminal}) of model day d: origin/main, then the
+        inbox's attempt and call branches of d whose file is not on main; a failed read raises DayReadFailed."""
         P = paths.prefix(mode)
         day = d.isoformat()
         att_rx = re.compile(rf"(?P<cid>{day}_(?:{clock.TAG_RE}))_(?P<n>[12])\.json")
@@ -297,20 +339,7 @@ class Session:
                     calls[m["cid"]] = _loads_or_none(self.git.ref_file(ref, paths.call_path(mode, m["cid"])))
         except gitops.GitError as e:
             raise DayReadFailed() from e
-        wakes = []
-        for cid in sorted({c for c, _n in att}, key=clock.window_key):
-            w = clock.window_of(cid)
-            docs = [att[k] for k in sorted(att) if k[0] == cid]
-            reason = next((x["wake"].get("reason") for x in docs
-                           if isinstance(x, dict) and isinstance(x.get("wake"), dict)), None)
-            wakes.append({"call_id": cid, "check_utc": w.check_utc, "kind": w.kind, "reason": reason})
-        trades = []
-        for cid in sorted(set(calls) | set(terms), key=clock.window_key):
-            doc = terms.get(cid) if cid in terms else calls.get(cid)
-            if isinstance(doc, dict) and doc.get("status") == "called":
-                w = clock.window_of(cid)
-                trades.append({"call_id": cid, "check_utc": w.check_utc, "exit_utc": w.exit_utc})
-        return wakes, trades
+        return att, calls, terms
 
     # ------------------------------------------------------------ context (R-AN-14..R-AN-23)
     def context(self):
@@ -331,8 +360,20 @@ class Session:
             wait = min(td.PACE_S, float(st["td_last_start_mono"]) + td.PACE_S - self.mono())
             if wait > 0:
                 self.sleep(wait)
+        open_ = None
+        if paths.a15_applies(paths.read_mode(view), w.day):     # R-AN-92: read before the first request
+            try:
+                entries = [e for e in self.review_entries(view, mode, w.day) if e["call_id"] != w.call_id]
+            except DayReadFailed:
+                self.out("error day_read")
+                return 1
+            me = {"call_id": w.call_id, "entry_utc": w.entry_utc, "exit_utc": w.exit_utc, "status": None}
+            entries = sorted(entries + [me], key=lambda e: (e["entry_utc"], e["call_id"] == w.call_id))
+            entries = entries[:entries.index(me) + 1]
+            open_ = review.open_sets(entries)[0][w.call_id]
         fetcher = td.Fetcher(get=self.http_get, clock=self.mono, sleep=self.sleep, now=self.now)
-        ctx = context.build(view, head, mode, w, asof, params, fetcher, wake=st.get("wake") or records.wake_of(w))
+        ctx = context.build(view, head, mode, w, asof, params, fetcher, wake=st.get("wake") or records.wake_of(w),
+                            review_open=open_)
         sha = context.context_sha256(ctx)
         st.update(context_sha256=sha, repo_head_sha=head, failures=0)
         self.work.mkdir(parents=True, exist_ok=True)
@@ -370,7 +411,10 @@ class Session:
         if raw is None:
             obj, errs = None, ["missing_plan"]
         else:
-            obj, errs = plan.validate(raw, stay_reason=plan.stay_reason_applies(ctx.get("schema")))
+            p3 = plan.plan3_applies(ctx.get("schema"))
+            obj, errs = plan.validate(raw, stay_reason=plan.stay_reason_applies(ctx.get("schema")), plan3=p3)
+            if p3 and obj is not None and obj["action"] not in review.allowed_actions(ctx):
+                obj, errs = None, ["action_not_allowed"]          # R-AN-26 (§16.18 A15)
         if errs:
             st["failures"] = int(st.get("failures", 0)) + 1
             self._save_state(st)
@@ -378,8 +422,7 @@ class Session:
             if st["failures"] >= MAX_FAILURES:
                 return self._finish_call(st, ctx, "no_call:invalid", None, None)
             return 2
-        status = "stay_out" if obj["action"] == "stay_out" else "called"
-        return self._finish_call(st, ctx, status, obj, rec.sha256_bytes(raw))
+        return self._finish_call(st, ctx, plan.STATUS_OF[obj["action"]], obj, rec.sha256_bytes(raw))
 
     def _finish_call(self, st, ctx, status, plan_obj, plan_sha):
         head = self.git.fetch_main()
@@ -389,7 +432,8 @@ class Session:
             self.out("refused closed")
             return 0
         pins = paths.read_pins(view) or {}
-        pb = memory.playbook_in_force(view, dt.date.fromisoformat(ctx["model_day"]), "live")
+        pb = memory.playbook_in_force(view, dt.date.fromisoformat(ctx["model_day"]),
+                                      self._pb_mode(view, mode, dt.date.fromisoformat(ctx["model_day"])))
         doc = records.call(ctx, st["context_sha256"], st["n"], status, plan_obj, plan_sha,
                            int(st.get("failures", 0)), {"version": pb["version"], "sha256": pb["sha256"]}, pins,
                            records.frozen_block(view), self._selfrep("locked_utc"),
@@ -405,6 +449,12 @@ class Session:
             return 1
         self.out(f"locked {w.call_id} status={status}")
         return 0
+
+    @staticmethod
+    def _pb_mode(view, mode, day):
+        """Whose playbook is in force: the canary's own versions only for canary model days >= a15_from (R-AN-50,
+        §16.18 A15); otherwise the live version, as before."""
+        return "canary" if mode == "canary" and paths.a15_applies(paths.read_mode(view), day) else "live"
 
     # ------------------------------------------------------------ probes (R-AN-71, R-AN-84; C5-C7)
     def run_probes(self, view, head, kind, tag, fetched=None):
@@ -458,12 +508,21 @@ class Session:
         pushed = st.get("lesson_pushed", {})
         done = list(st.get("lesson_done", []))          # locked in this session, perhaps not merged yet
         cand = None
-        if mode == "canary":
+        a15 = paths.a15_from(paths.read_mode(view))
+        canary_real = mode == "canary" and a15 is not None and self.now().date() >= a15     # R-AN-95
+        if mode == "canary" and not canary_real:
             fx = view.read_json(paths.CANARY_SETTLED_FIXTURE)
             pool = [(fx["call_id"], paths.CANARY_SETTLED_FIXTURE)] if fx else []
         else:
-            pool = sorted(((p.rsplit("/", 1)[1][:-5], p) for p in view.list("analyst/settled/")
-                           if p.endswith(".json")), key=lambda x: clock.window_key(x[0]))
+            pre = f"{paths.prefix(mode)}settled/"
+            pool = []
+            for p in view.list(pre):
+                if p.endswith(".json"):
+                    try:
+                        pool.append((clock.window_key(p[len(pre):-5]), p[len(pre):-5], p))
+                    except ValueError:
+                        continue
+            pool = [(cid, p) for _k, cid, p in sorted(pool)]
         for cid, p in pool:
             if cid in done or view.exists(paths.lesson_path(mode, cid)):
                 continue
@@ -498,7 +557,7 @@ class Session:
         pushed[cid] = n
         self.work.mkdir(parents=True, exist_ok=True)
         (self.work / "lesson_input.json").write_bytes(settled_bytes)
-        pb = memory.playbook_in_force(view, self.now().date(), "live")
+        pb = memory.playbook_in_force(view, self.now().date(), self._pb_mode(view, mode, self.now().date()))
         st = {"kind": "lesson", "mode": mode, "call_id": cid, "n": n, "lesson_pushed": pushed, "lesson_done": done,
               "failures": 0,
               "repo_head_sha": head, "settled_sha256": rec.sha256_bytes(settled_bytes),

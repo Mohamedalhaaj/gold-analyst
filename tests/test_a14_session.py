@@ -70,10 +70,10 @@ def test_a_trigger_session_end_to_end(tmp_path):
     h.at(2026, 11, 10, 11, 3)
     assert h.run("context") == 0 and h.log[-1].startswith(f"context_ok {T1100}")
     ctx = json.loads((h.sess_dir / ".analyst_run" / "context.json").read_text())
-    assert ctx["schema"] == "analyst-context/4" and ctx["window"] == "T" and ctx["status"] == "ok"
+    assert ctx["schema"] == "analyst-context/5" and ctx["window"] == "T" and ctx["status"] == "ok"   # A15: /5
     assert ctx["wake"]["reason"] == "asia_up" and ctx["wake"]["values"]["c_t"] == 4011.0
     assert ctx["wake"]["values"]["r20"] == 20.0 and len(ctx["wake"]["r20_days"]) == 20
-    assert ctx["sources"]["note"].endswith(context.WAKE_NOTE)
+    assert ctx["sources"]["note"].endswith(context.WAKE_NOTE + context.REVIEW_NOTE)
     assert ctx["d_ref"]["slot"] == 12                                           # entry 11:30 UTC = model 13:30
     assert ctx["store"]["slots_sha256"] == rec.sha256_bytes(h.world.main_file(context.FORECASTS_PATH))
 

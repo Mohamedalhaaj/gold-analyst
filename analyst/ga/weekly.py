@@ -4,6 +4,12 @@ The week of a Saturday is Monday-Friday of its ISO week. It is complete iff ever
 terminal record and, in live mode, every `called` window has a settled record and every settled record of the week has
 a lesson file (ok or failed) or 2 accepted lesson attempts. A playbook is UTF-8 text, <= 1200 words, no C0/C1 control
 except LF, no `http`, no three backticks, first line exactly `# playbook v<k>`.
+
+§16.18 A15 (R-AN-49, R-AN-95): once MODE.json a15_from is set, the canary week is complete by the live rule on the
+canary records (every canary `called` window has a canary settled record, every canary settled record of the week a
+canary lesson file or 2 canary lesson attempts), and a week with a canary `called` window before a15_from is never
+complete. The canary revision input shows the canary settled records and only the canary lessons whose call_id has a
+canary settled record (never the fixture's).
 """
 import datetime as dt
 import re
@@ -44,15 +50,19 @@ def expected_in(mode_doc, mode, days, view=None):
 
 def week_complete(view, mode, saturday):
     mode_doc = paths.read_mode(view)
+    a15 = paths.a15_from(mode_doc)
+    records_rule = mode == "live" or a15 is not None              # the canary's own records (§16.18 A15, R-AN-95)
     for w in expected_in(mode_doc, mode, week_days(saturday), view):
         t = witness.terminal(view, mode, w.call_id)
         if t is None:
             return False, f"terminal:{w.call_id}"
-        if mode != "live":
+        if not records_rule:
             continue
-        if t.get("status") == "called" and not view.exists(paths.settled_path(w.call_id)):
+        if mode == "canary" and t.get("status") == "called" and w.day < a15:
+            return False, f"pre_a15:{w.call_id}"
+        if t.get("status") == "called" and not view.exists(paths.settled_path(w.call_id, mode)):
             return False, f"settled:{w.call_id}"
-        if view.exists(paths.settled_path(w.call_id)) and not view.exists(paths.lesson_path(mode, w.call_id)):
+        if view.exists(paths.settled_path(w.call_id, mode)) and not view.exists(paths.lesson_path(mode, w.call_id)):
             if len(witness.accepted_attempts(view, mode, f"lesson-{w.call_id}")) < 2:
                 return False, f"lesson:{w.call_id}"
     return True, None
@@ -90,15 +100,18 @@ def lint_playbook(raw, k):
 
 def revision_input(view, mode, k):
     pb_path = paths.playbook_path(mode, k)
+    canary_records = mode == "canary" and paths.a15_from(paths.read_mode(view)) is not None
+    sp = f"{paths.prefix(mode)}settled/"
+    has_settled = {p[len(sp):-5] for p in view.list(sp) if p.endswith(".json")}
     lessons = []
     for p in view.list(f"{paths.prefix(mode)}lessons/"):
         doc = view.read_json(p)
-        if doc and doc.get("status") == "ok":
+        if doc and doc.get("status") == "ok" and (not canary_records or doc.get("call_id") in has_settled):
             lessons.append({"call_id": doc["call_id"], "text_ar": doc["text_ar"]})
     lessons.sort(key=lambda x: clock.window_key(x["call_id"]))
     settled = []
-    if mode == "live":
-        for p in view.list("analyst/settled/"):
+    if mode == "live" or canary_records:
+        for p in view.list(sp):
             s = view.read_json(p)
             o = s.get("outcome") or {}
             settled.append({"call_id": s["call_id"], "action": s["action"], "class": s["class"],

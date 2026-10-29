@@ -54,6 +54,13 @@ call attempt of `analyst-attempt/2` must carry a well-formed `wake` (records.val
 windows of a mode are closed strictly in window order, so an expected window whose deadline + 20 min has not passed
 holds the closing of the mode's later windows (their accepted calls included) until it is due; windows 30 minutes
 apart then never close a window inside its grace through the chain.
+
+§16.18 A15 (R-AN-29, R-AN-33, R-AN-36, R-AN-39, R-AN-95): two terminal statuses come from the call itself,
+`review_hold` and `review_close`; step 4 (derivable) applies to `called` calls of every action (buy, sell, reverse,
+add) and not to these two. A call whose status does not follow from its plan, or with a review status or action
+without an `analyst-context/5` context, is `invalid_content` (records.valid_call); the merge does not recompute the
+open set. For model days >= a15_from the closer never writes `skipped:trade_open`. A canary lesson is accepted with a
+canary settled record (analyst/canary/settled/) as well as for the fixture.
 """
 import datetime as dt
 import re
@@ -92,7 +99,7 @@ NO_AUTH = ("-c", "http.https://github.com/.extraheader=")   # drops the token ac
 PROTO_V2 = ("-c", "protocol.version=2")   # the server then lists only the ref asked for: no branch flood in the answer
 TERMINAL_STATUSES = ("called", "stay_out", "no_call:refusal", "no_call:invalid", "no_call:data", "no_call:d_ref",
                      "no_call:late", "no_call:run", "missed:trigger", "missed:push", "skipped:holiday",
-                     "skipped:trade_open", "skipped:day_cap")
+                     "skipped:trade_open", "skipped:day_cap", "review_hold", "review_close")
 
 
 class InboxUnavailable(Exception):
@@ -760,7 +767,7 @@ class Merge:
         if w.kind == "trigger":
             return None
         earlier = self.earlier_of_day(mode, w)
-        for x in earlier:
+        for x in ([] if paths.a15_applies(self.mode_doc, w.day) else earlier):   # no trade_open from a15_from
             t = self.view.read_json(paths.terminal_path(mode, x.call_id)) or {}
             if t.get("status") == "called" and x.exit_utc > w.entry_utc:
                 return "skipped:trade_open", x.call_id
@@ -1038,7 +1045,7 @@ class Merge:
             status, detail = "no_call:invalid", "no_attempt"
         elif att[0]["void"]:
             status, detail = "no_call:invalid", "void_attempt"
-        elif not _derivable(doc):
+        elif doc["status"] not in ("review_hold", "review_close") and not _derivable(doc):   # step 4 (§16.18 A15)
             status, detail = "no_call:invalid", "underivable"
         else:
             status, detail = doc["status"], doc.get("detail")
@@ -1049,7 +1056,9 @@ class Merge:
     def _settled_exists(self, mode, cid):
         if mode == "canary":
             fx = self.view.read_json(paths.CANARY_SETTLED_FIXTURE)
-            return bool(fx) and fx.get("call_id") == cid
+            if bool(fx) and fx.get("call_id") == cid:
+                return True
+            return self.view.exists(paths.settled_path(cid, "canary"))       # R-AN-95 (§16.18 A15)
         return self.view.exists(paths.settled_path(cid))
 
     def _lesson(self, mode, path, ident, cid, data, sha, push, t_utc, t_src):

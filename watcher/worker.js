@@ -9,6 +9,11 @@
 // never W1 or W2) and writes one log entry per check to Workers KV. `start` is authoritative (R-AN-90); the watcher
 // only avoids fires its gates would refuse.
 //
+// §16.18 A15 (R-AN-91, R-AN-89): for model days >= MODE.json a15_from the watcher does not form O(T) and never
+// decides `trade_open`: its decision is R(T) without step 1, so a window during an open trade is fired like any other
+// and becomes a review in its session. Its reads (for E(T)), request, fire, 6-a-day limit, log and secrets are
+// unchanged; days before a15_from keep the A14 rule.
+//
 // Secrets (Worker secrets, never in a file, a log line or a response): TD_API_KEY, FIRE_URL, FIRE_TOKEN.
 // Binding: WATCHER_LOG (Workers KV). The only route is GET /log?day=YYYY-MM-DD.
 
@@ -379,9 +384,10 @@ function prefix(mode) {
 /**
  * What the watcher can see of window w: attempted (an attempt record it can read), called (terminal on main is
  * `called`, or with no terminal its call file on main, else on the call branch, has status `called`) and the
- * attempt's wake.reason. Reads stop early where the answer is already known.
+ * attempt's wake.reason. Reads stop early where the answer is already known; with `noTrades` (a model day >=
+ * a15_from) no call file is read, since O(T) is not formed.
  */
-async function readWindow(io, mode, w, T) {
+async function readWindow(io, mode, w, T, noTrades = false) {
   const P = prefix(mode);
   const attemptPath = `${P}attempts/${w.call_id}_1.json`;
   const callPath = `${P}calls/${w.call_id}.json`;
@@ -396,7 +402,7 @@ async function readWindow(io, mode, w, T) {
     attempt = (await readJson(io, "main", attemptPath))
       || (await readJson(io, `claude/analyst-${mode}-attempt-${w.call_id}-1`, attemptPath));
     out.attempted = !!attempt;
-    if (out.attempted && w.exit > T + 30 * MIN) {
+    if (out.attempted && !noTrades && w.exit > T + 30 * MIN) {
       const call = (await readJson(io, "main", callPath))
         || (await readJson(io, `claude/analyst-${mode}-call-${w.call_id}`, callPath));
       out.called = !!call && call.status === "called";
@@ -473,6 +479,8 @@ async function runCheck(scheduledMs, env, io) {
   ]);
   const a14 = modeDoc && typeof modeDoc.a14_from === "string" ? modeDoc.a14_from : null;
   if (modeDoc && (a14 === null || d < a14)) return null; // A14 does not apply to d
+  const a15 = modeDoc && typeof modeDoc.a15_from === "string" ? modeDoc.a15_from : null;
+  const reviews = a15 !== null && d >= a15; // A15: no O(T), never `trade_open`
   const log = await readLog(env, d);
   if (log.some((e) => e.check_utc === isoZ(T))) return null; // a repeated run of a check that already acted
   const entry = { check_utc: isoZ(T), model_day: d, decision: "none", fired: false, http: null, tries: 0, utc: null };
@@ -496,13 +504,13 @@ async function runCheck(scheduledMs, env, io) {
     .map((e) => ({ ...triggerWindow(d, Date.parse(e.check_utc)), loggedReason: e.decision.slice(8) }));
   const firesToday = log.filter((e) => e.fired).length;
   const candidates = [...scheduledWindows(d), ...firedTriggers].filter((w) => w.check < T);
-  const seen = await Promise.all(candidates.map((w) => readWindow(io, mode, w, T)));
+  const seen = await Promise.all(candidates.map((w) => readWindow(io, mode, w, T, reviews)));
   const E = [];
   const O = [];
   candidates.forEach((w, i) => {
     const s = seen[i];
     if (s.attempted) E.push({ check: w.check, kind: w.kind, reason: s.reason ?? w.loggedReason ?? null });
-    if (s.called && w.exit > T + 30 * MIN) O.push(w);
+    if (!reviews && s.called && w.exit > T + 30 * MIN) O.push(w);
   });
 
   let r = ruleR(T, d, E, O, undefined);

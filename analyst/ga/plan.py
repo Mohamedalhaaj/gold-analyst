@@ -12,11 +12,22 @@ Missing: `missing_keys`; on a trade: `extra_keys`; another value or type: `stay_
 event_risk against `events` (the canary report counts that). An `analyst-context/2` call keeps the old key set.
 
 S and T: exact integer arithmetic, half up: m = round(10·mult); S_dimes = (D_ref_cents·m_S + 50) // 100; S = S_dimes/10.
+
+§16.18 A15 (`analyst-plan/3`, R-AN-26, R-AN-27): for a call whose context is `analyst-context/5`, action ∈ {buy, sell,
+stay_out, hold, close, reverse, add}; buy and sell as before; stay_out as A12; hold and close have exactly {action,
+confidence, reason_ar, key_risks_ar}; reverse and add have exactly the keys and multiples of buy and sell. `lock` also
+checks the action against the context (review.allowed_actions): buy, sell or stay_out when `review` is null, one of
+`review.options` when it is not; otherwise `action_not_allowed`. reverse and add take S and T from their own
+context's D_ref, side = −side(w) for reverse and side(w) for add, w being the one trade of `review.open`; hold and
+close are as stay_out (side 0, no S or T). A call with an earlier context schema keeps `analyst-plan/2`.
 """
 import json
 import math
 
 ACTIONS = ("buy", "sell", "stay_out")
+ACTIONS_A15 = ACTIONS + ("hold", "close", "reverse", "add")  # analyst-plan/3 (§16.18 A15); plan.py stays standalone
+MULT_ACTIONS = ("buy", "sell", "reverse", "add")           # the actions with stop_mult and target_mult (the exam's
+                                                           # repository carries rec, plan and gitops only)
 STOP_MULTS = (1.0, 1.5, 2.0)
 TARGET_MULTS = (1.0, 1.5, 2.0, 3.0)
 CONFIDENCE = ("low", "medium", "high")
@@ -26,12 +37,20 @@ TRADE_KEYS = {"action", "stop_mult", "target_mult", "confidence", "reason_ar", "
 STAY_KEYS = {"action", "confidence", "reason_ar", "key_risks_ar"}
 STAY_OUT_REASONS = ("event_risk", "no_setup", "conflicting_signals", "mid_range")
 STAY_KEYS_A12 = STAY_KEYS | {"stay_out_reason"}
-REASON_CONTEXT_SCHEMAS = ("analyst-context/3", "analyst-context/4")   # /4 = /3 + wake (§16.18 A14)
+REASON_CONTEXT_SCHEMAS = ("analyst-context/3", "analyst-context/4", "analyst-context/5")   # /4 = /3 + wake (A14),
+PLAN3_CONTEXT_SCHEMAS = ("analyst-context/5",)                                            # /5 = /4 + review (A15)
+STATUS_OF = {"buy": "called", "sell": "called", "reverse": "called", "add": "called", "stay_out": "stay_out",
+             "hold": "review_hold", "close": "review_close"}                           # R-AN-29 (§16.18 A15)
 
 
 def stay_reason_applies(context_schema):
     """R-AN-26 (§16.18 A12): the stay_out_reason rule applies to a call whose context has this schema."""
     return context_schema in REASON_CONTEXT_SCHEMAS
+
+
+def plan3_applies(context_schema):
+    """R-AN-26 (§16.18 A15): `analyst-plan/3` applies to a call whose context is `analyst-context/5`."""
+    return context_schema in PLAN3_CONTEXT_SCHEMAS
 
 
 def _bad_control(s):
@@ -59,9 +78,10 @@ def _unique_pairs(pairs):
     return dict(pairs)
 
 
-def validate(raw_bytes, stay_reason=False):
+def validate(raw_bytes, stay_reason=False, plan3=False):
     """(plan dict with multiples as floats, None) or (None, [error codes]). `stay_reason`: apply §16.18 A12's
-    stay_out_reason rule (an `analyst-context/3` call, stay_reason_applies)."""
+    stay_out_reason rule (an `analyst-context/3` call, stay_reason_applies); `plan3`: §16.18 A15's
+    `analyst-plan/3` actions (plan3_applies). The action's legality in its context is `lock`'s check."""
     errs = []
     try:
         text = raw_bytes.decode("utf-8")
@@ -71,15 +91,20 @@ def validate(raw_bytes, stay_reason=False):
     if not isinstance(obj, dict):
         return None, ["not_object"]
     action = obj.get("action")
-    if action not in ACTIONS:
+    if action not in (ACTIONS_A15 if plan3 else ACTIONS):
         errs.append("action")
-    want = (STAY_KEYS_A12 if stay_reason else STAY_KEYS) if action == "stay_out" else TRADE_KEYS
+    if action == "stay_out":
+        want = STAY_KEYS_A12 if stay_reason else STAY_KEYS
+    elif plan3 and action in ("hold", "close"):
+        want = STAY_KEYS
+    else:
+        want = TRADE_KEYS
     extra, missing = set(obj) - want, want - set(obj)
     if extra:
         errs.append("extra_keys")
     if missing:
         errs.append("missing_keys")
-    if action in ("buy", "sell"):
+    if action in MULT_ACTIONS:
         if "stop_mult" in obj and not _num_in(obj["stop_mult"], STOP_MULTS):
             errs.append("stop_mult")
         if "target_mult" in obj and not _num_in(obj["target_mult"], TARGET_MULTS):
@@ -104,14 +129,22 @@ def validate(raw_bytes, stay_reason=False):
     if errs:
         return None, sorted(set(errs))
     plan = dict(obj)
-    if action in ("buy", "sell"):
+    if action in MULT_ACTIONS:
         plan["stop_mult"] = float(obj["stop_mult"])
         plan["target_mult"] = float(obj["target_mult"])
     return plan, None
 
 
-def side_of(action):
-    return {"buy": 1, "sell": -1, "stay_out": 0}[action]
+def side_of(action, review=None):
+    """The call's side (R-AN-27): +1 buy, −1 sell, 0 stay_out, hold and close; reverse −side(w) and add side(w), w
+    the one trade of the context's `review.open` (§16.18 A15). Raises when a reverse or an add has not exactly one."""
+    if action in ("reverse", "add"):
+        op = (review or {}).get("open") if isinstance(review, dict) else None
+        if not isinstance(op, list) or len(op) != 1:
+            raise ValueError("reverse and add need exactly one open trade")
+        s = {"buy": 1, "sell": -1}[op[0]["side"]]
+        return -s if action == "reverse" else s
+    return {"buy": 1, "sell": -1, "stay_out": 0, "hold": 0, "close": 0}[action]
 
 
 def s_and_t(d_ref_cents, stop_mult, target_mult):
@@ -134,10 +167,10 @@ def derivable(call):
         if plan is None:
             return all(call.get(k) is None for k in ("stop_mult", "target_mult", "S", "T", "S_dimes", "T_dimes")) \
                 and call.get("side") in (None, 0)
-        side = side_of(plan["action"])
+        side = side_of(plan["action"], ctx.get("review"))
         if call.get("side") != side:
             return False
-        if plan["action"] == "stay_out":
+        if plan["action"] in ("stay_out", "hold", "close"):
             return all(call.get(k) is None for k in ("stop_mult", "target_mult", "S", "T", "S_dimes", "T_dimes"))
         cents = dref.get("D_ref_cents")
         if not isinstance(cents, int) or cents <= 0 or int(round(dref["D_ref"] * 100)) != cents:

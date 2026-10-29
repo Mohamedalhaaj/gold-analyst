@@ -45,11 +45,11 @@ export class FakeKV {
 const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status });
 
 export class World {
-  constructor({ bars = [], mode = "canary", a14_from = "2026-10-26", calls_enabled = true } = {}) {
+  constructor({ bars = [], mode = "canary", a14_from = "2026-10-26", a15_from = undefined, calls_enabled = true } = {}) {
     this.bars = bars;
     this.mainFiles = new Map();
     this.branchFiles = new Map();
-    this.mainFiles.set("analyst/MODE.json", { mode, a14_from, canary_from: "2026-10-26" });
+    this.mainFiles.set("analyst/MODE.json", { mode, a14_from, a15_from, canary_from: "2026-10-26" });
     this.mainFiles.set("analyst/STATE.json", { calls_enabled });
     this.kv = new FakeKV();
     this.env = { ...SECRETS, WATCHER_LOG: this.kv };

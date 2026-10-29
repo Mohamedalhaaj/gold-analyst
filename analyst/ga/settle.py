@@ -14,12 +14,25 @@ with the plan's target added and the stop distance S from the call:
 - net$ = s·(P_x − P_e) − 0.10; stress = net$ − 0.25; R = net$/S; R_stress = stress/S; y = clip(R_stress, −2, 2);
   cost$ = 0.10 + half spreads at the entry and exit quotes; gross$ = net$ + cost$.
 - void (both sides of UTC day d missing) and no_quote count with y = R = R_stress = −1, net$ = stress = −S, cost 0.
+
+§16.18 A15 (R-AN-93, R-AN-94, R-AN-95): for model days >= a15_from a trade closed by a review (closed_by, the review's
+call_id; managed_utc = m, its entry) runs the path loop for minutes t0 .. m − 1 only; with no exit there it leaves at
+m: the exit side's open of minute m (reason `managed`, fill open), else the exit side's close of the latest quoted
+minute in [t0, m) (managed, close), else X (gap, level, no exit minute). Minute m is not tested. A trade the loop ends
+before m is settled as without a review. `opposite` uses the same minutes and the same managed exit; `unmanaged` is
+the outcome over [t0, t1) as if nothing had closed it (descriptive, for the lesson). x_end_utc is the end of the
+exposure: the exit minute for an `open` fill inside the loop, the minute after it for a `level` fill inside the loop,
+exit_utc for a time exit or R-AN-42's gap at X after the loop, m for a managed exit, and for void or no_quote m when
+closed_by is set, else exit_utc. For reason `managed`, mfe_usd and mae_usd run from t0 through m − 1. The record is
+`analyst-settled/2`: `/1` plus managed_utc, closed_by, x_end_utc, weight, cluster after exit_utc and unmanaged, reviews
+after opposite, with `mode` and `class` canary for a canary record.
 """
 import datetime as dt
 
 from . import clock, paths, rec, store
 
 SETTLED_SCHEMA = "analyst-settled/1"
+SETTLED_SCHEMA_A15 = "analyst-settled/2"
 TWIN_SCHEMA = "analyst-twin/1"
 ALLOWANCE = 0.10
 STRESS_ADD = 0.25
@@ -51,8 +64,9 @@ def full_stop(S, status):
             "net_usd": -S, "stress_net_usd": -S, "R": -1.0, "R_stress": -1.0, "y": -1.0}
 
 
-def trade(m, w, side, S_dimes, T_dimes):
-    """Settle one side. m: store.Minutes with UTC days d−1 and d."""
+def trade(m, w, side, S_dimes, T_dimes, managed=None):
+    """Settle one side. m: store.Minutes with UTC days d−1 and d; `managed`: the epoch second of the closing
+    review's entry minute (§16.18 A15), or None."""
     S = S_dimes / 10
     S_pts, T_pts = 100 * S_dimes, 100 * T_dimes
     t0, t1 = int(w.entry_utc.timestamp()), int(w.exit_utc.timestamp())
@@ -76,7 +90,8 @@ def trade(m, w, side, S_dimes, T_dimes):
     run = 0
     exit_px = reason = fill = exit_t = None
     x_field = 3
-    for t in range(t0, t1, 60):
+    in_loop = False
+    for t in range(t0, t1 if managed is None else managed, 60):
         q = _row(m, ext, t)
         if q is not None:
             o, h, lo, _c = q[0], q[1], q[2], q[3]
@@ -95,11 +110,23 @@ def trade(m, w, side, S_dimes, T_dimes):
                 elif lo <= Tg:
                     exit_px, reason, fill, exit_t = Tg, "target", "level", t
             if exit_px is not None:
+                in_loop = True
                 break
         run = 0 if _live(m, t) else run + 1
         if run >= GAP_MINUTES:
             exit_px, reason, fill, exit_t = X, "gap", "level", t
+            in_loop = True
             break
+    if exit_px is None and managed is not None:       # the managed exit (R-AN-93 cases 1-3)
+        q = _row(m, ext, managed)
+        if q is not None:
+            exit_px, reason, fill, exit_t, x_field = q[0], "managed", "open", managed, 0
+        else:
+            last = next((t for t in range(managed - 60, t0 - 60, -60) if _row(m, ext, t) is not None), None)
+            if last is not None:
+                exit_px, reason, fill, exit_t = _row(m, ext, last)[3], "managed", "close", last
+            else:
+                exit_px, reason, fill, exit_t = X, "gap", "level", None
     if exit_px is None:
         last = None
         for t in range(t1 - 60, t0 - 60, -60):
@@ -112,13 +139,20 @@ def trade(m, w, side, S_dimes, T_dimes):
             exit_px, reason, fill, exit_t = _row(m, ext, last)[3], "time", "close", last
     net = side * (exit_px - pe) / 1000 - ALLOWANCE
     stress = net - STRESS_ADD
-    cost = ALLOWANCE + _half_spread(m, e_min, e_field) + _half_spread(m, exit_t, x_field)
+    cost = ALLOWANCE + _half_spread(m, e_min, e_field) + (_half_spread(m, exit_t, x_field) if exit_t is not None
+                                                          else 0.0)
     R, Rs = net / S, stress / S
     out = {"status": "final", "P_e": pe / 1000, "P_e_src": src, "P_e_minute_utc": rec.iso(_ts(e_min)),
-           "X": X / 1000, "Tg": Tg / 1000, "exit_minute_utc": rec.iso(_ts(exit_t)), "P_x": exit_px / 1000,
-           "reason": reason, "fill": fill, "cost_usd": cost, "gross_usd": net + cost, "net_usd": net,
-           "stress_net_usd": stress, "R": R, "R_stress": Rs, "y": max(-CLIP, min(CLIP, Rs))}
-    return out, {"pe": pe, "exit_t": exit_t}
+           "X": X / 1000, "Tg": Tg / 1000, "exit_minute_utc": rec.iso(_ts(exit_t)) if exit_t is not None else None,
+           "P_x": exit_px / 1000, "reason": reason, "fill": fill, "cost_usd": cost, "gross_usd": net + cost,
+           "net_usd": net, "stress_net_usd": stress, "R": R, "R_stress": Rs, "y": max(-CLIP, min(CLIP, Rs))}
+    if in_loop:
+        x_end = exit_t if fill == "open" else exit_t + 60
+    elif managed is not None and (reason == "managed" or exit_t is None):
+        x_end = managed
+    else:
+        x_end = t1
+    return out, {"pe": pe, "exit_t": exit_t, "x_end": x_end, "managed": managed}
 
 
 def _ts(t):
@@ -138,10 +172,11 @@ def path_summary(m, w, side, outcome, aux):
     allm = [x for x in allm if x is not None]
     rng = (max(x[1] for x in allm) - min(x[2] for x in allm)) if allm else None
     mfe = mae = after = None
-    if outcome["status"] == "final" and aux:
+    if outcome["status"] == "final" and aux and aux["exit_t"] is not None:
         pe, xt = aux["pe"], aux["exit_t"]
         ext = "BID" if side > 0 else "ASK"
-        rows = [_row(m, ext, t) for t in range(t0, xt + 60, 60)]
+        upto = aux["managed"] if outcome["reason"] == "managed" else xt + 60     # t0 .. m − 1 (§16.18 A15)
+        rows = [_row(m, ext, t) for t in range(t0, upto, 60)]
         rows = [r for r in rows if r is not None]
         if rows:
             if side > 0:
@@ -210,41 +245,66 @@ def processable(rows_by_key, view, w, now):
     return True
 
 
-def settled_record(view, w, call, terminal, cls, m, rows_by_key, now, run_id, head_sha):
+def outcomes(m, w, call, rows_by_key, managed=None):
+    """{outcome, opposite, unmanaged, path_summary, x_end} of a called window (R-AN-41..47, R-AN-93). `managed`: the
+    closing review's entry (aware UTC), or None; `unmanaged` is null without it. x_end is aware UTC."""
+    side = call["side"]
+    mt = int(managed.timestamp()) if managed is not None else None
+    if is_void(rows_by_key, w):
+        return {"outcome": full_stop(call["S"], "void"), "opposite": full_stop(call["S"], "void"),
+                "unmanaged": full_stop(call["S"], "void") if managed is not None else None, "path_summary": None,
+                "x_end": managed if managed is not None else w.exit_utc}
+    out, aux = trade(m, w, side, call["S_dimes"], call["T_dimes"], mt)
+    opp, _oaux = trade(m, w, -side, call["S_dimes"], call["T_dimes"], mt)
+    un = trade(m, w, side, call["S_dimes"], call["T_dimes"])[0] if managed is not None else None
+    x_end = _ts(aux["x_end"]) if aux else (managed if managed is not None else w.exit_utc)
+    return {"outcome": out, "opposite": opp, "unmanaged": un, "path_summary": path_summary(m, w, side, out, aux),
+            "x_end": x_end}
+
+
+def settled_record(view, w, call, terminal, cls, m, rows_by_key, now, run_id, head_sha, mode="live", a15=None):
+    """The settled record (R-AN-46). `a15` (model days >= a15_from): {managed_utc, closed_by, weight, cluster, reviews,
+    res (outcomes() of the trade)} gives `analyst-settled/2` (R-AN-93); without it the record is `/1` as before."""
     plan_ = call["plan"]
     side = call["side"]
-    void = is_void(rows_by_key, w)
-    if void:
-        out, aux = full_stop(call["S"], "void"), None
-        opp, oaux = full_stop(call["S"], "void"), None
+    if a15 is not None:
+        res = a15["res"]
     else:
-        out, aux = trade(m, w, side, call["S_dimes"], call["T_dimes"])
-        opp, oaux = trade(m, w, -side, call["S_dimes"], call["T_dimes"])
+        res = outcomes(m, w, call, rows_by_key)
     _days, inputs = day_inputs(rows_by_key, w)
     days_b = view.read(store.DAYS_PATH) or b""
-    return {
-        "schema": SETTLED_SCHEMA, "call_id": w.call_id, "mode": "live", "window": w.name,
-        "model_day": w.day.isoformat(), "class": cls, "action": plan_["action"], "side": side,
+    doc = {
+        "schema": SETTLED_SCHEMA if a15 is None else SETTLED_SCHEMA_A15, "call_id": w.call_id, "mode": mode,
+        "window": w.name, "model_day": w.day.isoformat(), "class": cls, "action": plan_["action"], "side": side,
         "stop_mult": call["stop_mult"], "target_mult": call["target_mult"], "D_ref": call["d_ref"]["D_ref"],
         "S": call["S"], "T": call["T"], "S_dimes": call["S_dimes"], "T_dimes": call["T_dimes"],
-        "entry_utc": rec.iso(w.entry_utc), "exit_utc": rec.iso(w.exit_utc), "outcome": out, "opposite": opp,
-        "path_summary": path_summary(m, w, side, out, aux) if not void else None,
+        "entry_utc": rec.iso(w.entry_utc), "exit_utc": rec.iso(w.exit_utc)}
+    if a15 is not None:
+        doc.update(managed_utc=rec.iso(a15["managed_utc"]) if a15["managed_utc"] is not None else None,
+                   closed_by=a15["closed_by"], x_end_utc=rec.iso(res["x_end"]), weight=a15["weight"],
+                   cluster=a15["cluster"])
+    doc.update(outcome=res["outcome"], opposite=res["opposite"])
+    if a15 is not None:
+        doc.update(unmanaged=res["unmanaged"], reviews=a15["reviews"])
+    doc.update({
+        "path_summary": res["path_summary"],
         "call": {"action": plan_["action"], "stop_mult": plan_.get("stop_mult"),
                  "target_mult": plan_.get("target_mult"), "confidence": plan_["confidence"],
                  "reason_ar": plan_["reason_ar"], "key_risks_ar": plan_["key_risks_ar"]},
         "context": call["context"], "inputs": {"days": inputs, "days_csv_sha256": rec.sha256_bytes(days_b)},
         "call_sha256": terminal["call"]["sha256"],
-        "terminal_sha256": rec.sha256_bytes(view.read(paths.terminal_path("live", w.call_id))),
+        "terminal_sha256": rec.sha256_bytes(view.read(paths.terminal_path(mode, w.call_id))),
         "context_sha256": call["context_sha256"], "settled_utc": rec.iso(now), "run_id": run_id,
-        "head_sha": head_sha}
+        "head_sha": head_sha})
+    return doc
 
 
-def twin_record(view, w, terminal, m, rows_by_key, now, run_id, head_sha):
+def twin_record(view, w, terminal, m, rows_by_key, now, run_id, head_sha, mode="live"):
     if is_void(rows_by_key, w):
         st, me, mes, mx, mxs, dW = "void", None, None, None, None, None
     else:
         st, me, mes, mx, mxs, dW = twin(m, w)
-    return {"schema": TWIN_SCHEMA, "call_id": w.call_id, "mode": "live", "window": w.name,
+    return {"schema": TWIN_SCHEMA, "call_id": w.call_id, "mode": mode, "window": w.name,
             "model_day": w.day.isoformat(), "terminal_status": terminal["status"], "entry_utc": rec.iso(w.entry_utc),
             "exit_utc": rec.iso(w.exit_utc), "mid_entry": me, "mid_entry_src": mes, "mid_exit": mx,
             "mid_exit_src": mxs, "d_W": dW, "status": st, "settled_utc": rec.iso(now), "run_id": run_id,

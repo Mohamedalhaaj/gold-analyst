@@ -1,12 +1,12 @@
 {
  "$schema": "https://json-schema.org/draft/2020-12/schema",
- "$id": "analyst-plan/2",
- "title": "plan.json (ANALYST_V1_PREREG.md §3 Schema and Change A12; register R-AN-26, §16.18 A12). Lengths of reason_ar (1-400) and key_risks_ar (0-300) are enforced in code, not here.",
+ "$id": "analyst-plan/3",
+ "title": "plan.json (ANALYST_V1_PREREG.md §3 Schema, Change A12 and Change A15; register R-AN-26, §16.18 A12, A15). Lengths of reason_ar (1-400) and key_risks_ar (0-300) are enforced in code, not here, and so is the action's legality in its context: buy, sell or stay_out when the context's review is null, one of review.options when it is not (code action_not_allowed). A call whose context is earlier than analyst-context/5 keeps analyst-plan/2 (buy, sell and stay_out only).",
  "type": "object",
  "oneOf": [
   {
    "properties": {
-    "action": {"enum": ["buy", "sell"]},
+    "action": {"enum": ["buy", "sell", "reverse", "add"]},
     "stop_mult": {"enum": [1.0, 1.5, 2.0]},
     "target_mult": {"enum": [1.0, 1.5, 2.0, 3.0]},
     "confidence": {"enum": ["low", "medium", "high"]},
@@ -25,6 +25,16 @@
     "key_risks_ar": {"type": "string"}
    },
    "required": ["action", "stay_out_reason", "confidence", "reason_ar", "key_risks_ar"],
+   "additionalProperties": false
+  },
+  {
+   "properties": {
+    "action": {"enum": ["hold", "close"]},
+    "confidence": {"enum": ["low", "medium", "high"]},
+    "reason_ar": {"type": "string"},
+    "key_risks_ar": {"type": "string"}
+   },
+   "required": ["action", "confidence", "reason_ar", "key_risks_ar"],
    "additionalProperties": false
   }
  ]

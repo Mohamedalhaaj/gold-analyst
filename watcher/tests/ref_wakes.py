@@ -6,10 +6,14 @@ T + 30 min (A14-D4), wakes = windows with an attempt (A14-D5), every condition (
 holiday rule (A14-D7). legacy_wakes() is wake_freq.simulate itself (p_enter = 0) in plain Python, so that
 wake_freq_replay.py can show it equals wake_freq.simulate on the same bars.
 
+§16.18 A15 (R-AN-89, R-AN-91): from a15_from on, R(T) has no step 1: open trades never gate a check, so a window
+during an open trade is fired like any other (it becomes a review in its session).
+
 Standard library only.
 
 usage:
-  python3 ref_wakes.py expected <bars.json> <first_day> <last_day>   -> expected watcher decisions and wakes (stdout)
+  python3 ref_wakes.py expected <bars.json> <first_day> <last_day> [<a15_from>]
+                                                                     -> expected watcher decisions and wakes (stdout)
   python3 ref_wakes.py synthetic <seed>                               -> the synthetic bar fixture (stdout)
 """
 import datetime as dt
@@ -115,9 +119,10 @@ def conditions(T, d, bars):
     return out
 
 
-def replay(bars, days, outcome=None):
+def replay(bars, days, outcome=None, a15_from=None):
     """The watcher's decision at every check of each day and the wakes, with every woken window attempted (unless
-    `start` refuses it as a holiday of its own exchange) and its outcome from `outcome` (default trades())."""
+    `start` refuses it as a holiday of its own exchange) and its outcome from `outcome` (default trades()). For days
+    >= a15_from (a date or None) open trades are not formed (A15)."""
     outcome = outcome or trades
     out = {}
     for d in days:
@@ -132,7 +137,7 @@ def replay(bars, days, outcome=None):
         fires = 0
         for T in grid(d):
             E = [w for w in woken if w[0] < T]
-            O = [w for w in E if w[4] and w[3] > T + 30 * M]
+            O = [] if (a15_from and d >= a15_from) else [w for w in E if w[4] and w[3] > T + 30 * M]
             win = None
             if O:
                 dec = "trade_open"
@@ -271,8 +276,12 @@ def main(argv):
         bars = load_bars(argv[1])
         a, b = dt.date.fromisoformat(argv[2]), dt.date.fromisoformat(argv[3])
         days = [a + dt.timedelta(days=i) for i in range((b - a).days + 1)]
-        json.dump({"fixture": argv[1].rsplit("/", 1)[-1], "a14_from": argv[2], "days": replay(bars, days)},
-                  sys.stdout, separators=(",", ":"))
+        a15 = dt.date.fromisoformat(argv[4]) if len(argv) > 4 else None
+        doc = {"fixture": argv[1].rsplit("/", 1)[-1], "a14_from": argv[2]}
+        if a15:
+            doc["a15_from"] = argv[4]
+        doc["days"] = replay(bars, days, a15_from=a15)
+        json.dump(doc, sys.stdout, separators=(",", ":"))
         return
     raise SystemExit(__doc__)
 

@@ -22,9 +22,10 @@ def pins_with(files, **kw):
 
 class Harness:
     def __init__(self, tmp, mode="canary", canary_from="2026-11-10", live_from=None, store_last=dt.date(2026, 11, 9),
-                 extra=None, slots_until=dt.date(2026, 11, 20), inbox_from_utc=INBOX_FROM, a14_from=None, m30=None):
+                 extra=None, slots_until=dt.date(2026, 11, 20), inbox_from_utc=INBOX_FROM, a14_from=None, m30=None,
+                 a15_from=None):
         files = repo_files({"analyst/MODE.json": mode_json(mode, canary_from=canary_from, live_from=live_from,
-                                                           a14_from=a14_from)})
+                                                           a14_from=a14_from, a15_from=a15_from)})
         files["analyst/PINS.json"] = pins_with(files, inbox_from_utc=inbox_from_utc)
         files.update(store_files(clock.days_range(dt.date(2026, 9, 1), store_last)))
         files[store.SLOTS_PATH] = default_slots(slots_until).encode()

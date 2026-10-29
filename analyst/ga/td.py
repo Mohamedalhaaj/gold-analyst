@@ -26,6 +26,10 @@ transport, classification and provenance), then `fresh`, one at a time: at most 
 provenance; at most 9 requests a window. `start` keeps the monotonic time of the request's last try (`last_start`)
 in the session's scratch state so that `context` keeps the 8.0 s pacing across the two steps.
 
+§16.18 A15 (R-AN-92): a review's `context` makes one more request, `XAUUSD_M30R` (m30_url from the earliest open
+entry to asof floored to the half hour), after `fresh`: at most 9 requests a window, or 10 for a trigger review with
+`start`'s `XAUUSD_M30`. The pacing, the budget, the header and the network secret are unchanged.
+
 Interpretations (logged for the register): a price must also be finite (a decimal string too long for a double
 overflows to inf, which a record cannot hold, R-AN-3); a body is read up to 262,145 bytes, so `bytes` and `sha256` of a
 longer body are those of its first 262,145 bytes, and it is classified `invalid`; any exception of the transport
