@@ -1,0 +1,10 @@
+{
+ "effective_from": null,
+ "iso_week": "2026-W44",
+ "playbook_sha256": null,
+ "schema": "analyst-revision/1",
+ "status": "skipped",
+ "version": null,
+ "writer": "closer",
+ "written_utc": "2026-11-01T00:32:28Z"
+}
