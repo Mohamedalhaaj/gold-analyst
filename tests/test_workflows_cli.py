@@ -135,6 +135,7 @@ def test_inbox_mirror_workflow():
     assert "--force" not in text and "secrets.INBOX_MIRROR_KEY" in text
     run = job["steps"][-1]
     assert run["env"] == {"INBOX_MIRROR_KEY": "${{ secrets.INBOX_MIRROR_KEY }}",
+                          "GITHUB_TOKEN": "${{ github.token }}",
                           "WORKFLOW_RUN_BRANCH": "${{ github.event.workflow_run.head_branch }}"}
     assert run["run"].strip() == "python -I analyst/jobs/inbox_mirror.py"
 

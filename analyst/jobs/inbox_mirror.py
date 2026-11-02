@@ -11,6 +11,10 @@ I = inbox main:
 The deploy key (environment secret INBOX_MIRROR_KEY of `analyst-inbox`, main only) is written to a 0600 file under
 RUNNER_TEMP, used through GIT_SSH_COMMAND with IdentitiesOnly and strict host-key checking against GitHub's published
 SSH host keys (https://api.github.com/meta), never printed, and removed at the end. It prints only shas and enums.
+
+The /meta request carries the job's GITHUB_TOKEN (contents: read), never printed: an anonymous request shares the
+runner IP's limit with other jobs, and GitHub refused it now and then (HTTP 403, rate limit exceeded, 2026-10-31 and
+2026-11-02). A refused or failed try is retried, up to META_TRIES tries.
 """
 import json
 import os
@@ -19,12 +23,17 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 KEY_TYPES = ("ssh-ed25519", "ecdsa-sha2-nistp256", "ssh-rsa")
 KEY_RE = re.compile(r"(ssh-ed25519|ecdsa-sha2-nistp256|ssh-rsa) [A-Za-z0-9+/=]+")
+META_URL = "https://api.github.com/meta"
+META_TRIES = 4
+META_WAIT_S = (20, 40, 80)
 
 
 def guard(env):
@@ -100,6 +109,28 @@ def remove_key(path):
         pass
 
 
+def fetch_meta(env, opener=urllib.request.urlopen, sleep=time.sleep):
+    """GitHub's /meta document, with the job's GITHUB_TOKEN when the workflow passes one. A 403, a 429, a 5xx or a
+    connection error is retried after META_WAIT_S; any other HTTP status, or the last try's failure, ends the run."""
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "gold-analyst-inbox-mirror"}
+    if env.get("GITHUB_TOKEN"):
+        headers["Authorization"] = "Bearer " + env["GITHUB_TOKEN"]
+    for i in range(META_TRIES):
+        last = i == META_TRIES - 1
+        try:
+            with opener(urllib.request.Request(META_URL, headers=headers), timeout=30) as r:
+                return json.loads(r.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            if last or not (e.code in (403, 429) or e.code >= 500):
+                raise
+            print(f"meta_retry http={e.code}")
+        except urllib.error.URLError:
+            if last:
+                raise
+            print("meta_retry connection")
+        sleep(META_WAIT_S[i])
+
+
 def main():
     env = dict(os.environ)
     if not guard(env):
@@ -111,8 +142,7 @@ def main():
         print("inbox_or_key_missing")
         return 1
     tmp = env.get("RUNNER_TEMP") or tempfile.gettempdir()
-    with urllib.request.urlopen("https://api.github.com/meta", timeout=30) as r:
-        hosts = known_hosts(json.loads(r.read().decode("utf-8")))
+    hosts = known_hosts(fetch_meta(env))
     kh = Path(tmp) / "github_known_hosts"
     kh.write_text(hosts, encoding="ascii")
     path = write_key(tmp, key)

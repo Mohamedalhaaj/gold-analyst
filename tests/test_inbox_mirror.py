@@ -1,8 +1,11 @@
 """analyst-inbox-mirror (register R-AN-83): inbox main only ever moves by fast-forward to a gold-analyst main commit,
 never by a force push; an inbox main that is ahead is left alone, and one that has diverged fails the run."""
+import io
+import json
 import os
 import stat
 import subprocess
+import urllib.error
 
 import pytest
 
@@ -106,6 +109,57 @@ def test_known_hosts_from_githubs_published_keys():
                 {"ssh_keys": ["ssh-ed25519 AAAA\nevil.example ssh-ed25519 BBBB"]}):
         with pytest.raises(ValueError):
             inbox_mirror.known_hosts(bad)
+
+
+class _Resp(io.BytesIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _opener(outcomes, seen):
+    """An urlopen stand-in that answers each try with the next outcome: an HTTP status to refuse with, "conn" for a
+    connection error, or a dict for the /meta document."""
+    def op(req, timeout):
+        seen.append(req)
+        o = outcomes[len(seen) - 1]
+        if o == "conn":
+            raise urllib.error.URLError("down")
+        if isinstance(o, int):
+            raise urllib.error.HTTPError(req.full_url, o, "refused", {}, io.BytesIO(b"{}"))
+        return _Resp(json.dumps(o).encode())
+    return op
+
+
+def test_meta_carries_the_token_and_retries_a_rate_limit(capsys):
+    meta = {"ssh_keys": ["ssh-ed25519 AAAAC3Nza"]}
+    seen, waits = [], []
+    got = inbox_mirror.fetch_meta({"GITHUB_TOKEN": "tok-123"}, _opener([403, "conn", 503, meta], seen), waits.append)
+    assert got == meta and len(seen) == 4 and waits == [20, 40, 80]
+    assert all(r.get_header("Authorization") == "Bearer tok-123" for r in seen)
+    assert seen[0].full_url == "https://api.github.com/meta"
+    out = capsys.readouterr().out
+    assert "tok-123" not in out and out.split() == ["meta_retry", "http=403", "meta_retry", "connection",
+                                                    "meta_retry", "http=503"]
+
+
+def test_meta_without_a_token_is_anonymous():
+    seen = []
+    inbox_mirror.fetch_meta({}, _opener([{"ssh_keys": []}], seen), lambda s: None)
+    assert seen[0].get_header("Authorization") is None
+
+
+def test_meta_gives_up_on_the_last_try_and_at_once_on_other_statuses():
+    seen, waits = [], []
+    with pytest.raises(urllib.error.HTTPError):
+        inbox_mirror.fetch_meta({}, _opener([403, 403, 403, 403], seen), waits.append)
+    assert len(seen) == 4 and waits == [20, 40, 80]
+    seen, waits = [], []
+    with pytest.raises(urllib.error.HTTPError):
+        inbox_mirror.fetch_meta({}, _opener([404, {}], seen), waits.append)
+    assert len(seen) == 1 and waits == []
 
 
 def test_the_key_file_is_private_and_ends_with_a_newline(tmp_path):

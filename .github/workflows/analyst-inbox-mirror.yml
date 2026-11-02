@@ -54,4 +54,5 @@ jobs:
         env:
           WORKFLOW_RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
           INBOX_MIRROR_KEY: ${{ secrets.INBOX_MIRROR_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: python -I analyst/jobs/inbox_mirror.py
