@@ -124,7 +124,8 @@ advice and it never trades. Nobody has shown that the analyst has an edge; the e
 - A day cap of 10 (§16.18 A16), for model days on or after MODE.json `a16_from` (null: 6 as above). R(T)'s step 2
   (`start`'s `day_cap` gate), the closer's `skipped:day_cap` and the watcher's fire guard use 10 instead of 6
   (`paths.day_cap`, `wake.DAY_CAP_A16`); every other rule, prompt, request and record is unchanged. The canary's
-  10-trading-day count restarts on a16_from.
+  10-trading-day count does not restart on a16_from: it runs on from a15_from (the client's decision of 2026-11-06,
+  since only the cap changes).
 
 ## Layout
 - `analyst/ga/`: the frozen code (session scripts, probes, context, D_ref, merge, settlement, state). The session uses
