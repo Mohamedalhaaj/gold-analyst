@@ -1,9 +1,9 @@
 {
  "schema": "analyst-watcher-config/1",
- "exported_utc": "2026-10-29T16:16:41Z",
+ "exported_utc": "2026-11-06T00:45:22Z",
  "worker_name": "gold-analyst-watcher",
- "source_commit": "ced2ab9c27f6e587843bfe0ccb548b4b344b302b",
- "script_sha256": "1587525cc9f3949dc66b6badc85f8915a69f6fcd3c7fa4835695f6c93f20989f",
+ "source_commit": "d29a41b546aaa31429a2bd85053b2df0aca2d96f",
+ "script_sha256": "70242f0c9b08ad8ddac3c392add005554a6e3a8d40bd692ee63157e38649db19",
  "crons": [
   "1,31 * * * *"
  ],
@@ -22,6 +22,6 @@
   }
  ],
  "kv_namespace": "gold-analyst-watcher-watcher-log (binding WATCHER_LOG, created by wrangler's automatic provisioning at the first deploy)",
- "deployed_utc": "2026-10-29T16:16:18Z",
- "note": "Register §16.18 A15 (R-AN-91 export after a change of the Worker). The owner deployed watcher/ with npx --yes wrangler@4.151.1 deploy from a clean detached checkout of source_commit (the A15 build merge on gold-analyst main), no_bundle: the uploaded script is watcher/worker.js byte for byte (sha256 above); wrangler.toml unchanged; the KV binding WATCHER_LOG is inherited. Version e254565a-c28d-42c1-9684-ec93cfa48ad9 created 2026-10-29T16:16:18Z (deployed_utc). The three secrets set by the client on 2026-10-27 persist across the deploy: wrangler secret list shows exactly FIRE_TOKEN, FIRE_URL and TD_API_KEY; no value was read. Until MODE.json a15_from the Worker applies the A14 rule; from a15_from it no longer gates on open trades (A15). Previous export: source_commit a6158a3 (A14), deployed_utc 2026-10-27T22:32:59Z."
+ "deployed_utc": "2026-11-06T00:44:54Z",
+ "note": "Register §16.18 A16 (R-AN-91 export after a change of the Worker). The owner deployed watcher/ with npx --yes wrangler@4.151.1 deploy from a clean detached checkout of source_commit (the A16 build merge on gold-analyst main), no_bundle: the uploaded script is watcher/worker.js byte for byte (sha256 above); wrangler.toml unchanged; the KV binding WATCHER_LOG is inherited. Version b9446a8b-21ee-4ef7-8f55-8b06200c0b88 created 2026-11-06T00:44:54Z (deployed_utc). The three secrets set by the client on 2026-10-27 persist across the deploy: wrangler secret list shows exactly FIRE_TOKEN, FIRE_URL and TD_API_KEY; no value was read. Until MODE.json a16_from the Worker applies the cap of 6; from a16_from its day cap and fire guard are 10 (A16). Previous export: source_commit ced2ab9 (A15), deployed_utc 2026-10-29T16:16:18Z."
 }
