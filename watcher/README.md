@@ -55,7 +55,10 @@ the day before to L_d = 16:30 UTC on EDT, 17:30 on EST). Then:
   watcher still fires and `start` refuses (`no_table`).
 - Workers subrequests: a check reads 2 files plus 1 to 5 per earlier window (about 25 late in a busy day; 50 at worst
   when nothing has been merged for hours). The Workers free plan allows 50 subrequests per run; above that a read
-  fails, counts as absent, and `start` stays the gate.
+  fails, counts as absent, and `start` stays the gate. From a17_from (§16.18 A17) a check also reads every
+  candidate's call file (about one more read a window); the account is on Workers Paid since 2026-11-05 (1,000
+  subrequests a run), so the free plan's 50 no longer bind. A failed read counts as absent: a missed time window
+  leaves its trade to end at its exit.
 - raw.githubusercontent.com can serve a file up to about 5 minutes old; every window it reads was pushed at least
   15 minutes before the next check.
 

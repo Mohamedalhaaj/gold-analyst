@@ -245,13 +245,13 @@ class Session:
             raise Refusal("no_table")
         if hol.is_holiday(w):
             raise Refusal("skipped:holiday")
-        w, subject = self._time_window(view, mode, mode_doc, w, hol)
         _m, a, b = paths.mode_period(mode_doc)
         if a is None or w.day < a or (b is not None and w.day > b):
             raise Refusal("not_expected")
         state = view.read_json(paths.STATE_PATH)
         if state is not None and state.get("calls_enabled") is False:
             raise Refusal("calls_disabled")
+        w, subject = self._time_window(view, mode, mode_doc, w, hol)   # after R-AN-24's refusals (A17-R4)
         if witness.has_terminal(view, mode, w.call_id):
             raise Refusal("closed")
         acc = witness.accepted_attempts(view, mode, w.call_id)

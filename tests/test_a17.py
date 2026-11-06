@@ -85,6 +85,11 @@ def test_the_open_set_with_an_extension():
         assert ext3 == {} and eff3[w1["call_id"]] == w1["exit_utc"] and o3[w2["call_id"]] == [], st
     _o4, eff4, _c4, _x4 = review.open_state([dict(x, status="called", side=1)])
     assert eff4 == {}                                                       # a time window opens nothing
+    # a second trade open at the time window (an A15 add, 10:00 - 14:00): X is a review of neither trade
+    add = entry(f"{DS}_W1b", "called", "add", 1, [f"{DS}_W1"])
+    es = [w1, add, x]
+    o5, _e5, _c5, _x5 = review.open_state(es)
+    assert o5[x["call_id"]] == [] and review.reviews_of(es, o5) == {w1["call_id"]: [add]}
 
 
 def test_the_subject_of_a_check():

@@ -81,7 +81,7 @@ def open_state(entries):
     for r in entries:
         e = r["entry_utc"]
         o = [t for t in trades if eff[t["call_id"]] > e]
-        out[r["call_id"]] = o
+        out[r["call_id"]] = [] if is_time(r) else o          # a time window is a review of no trade (A17-R7)
         if closes(r):
             names = set(r.get("names") or ())
             for t in o:
