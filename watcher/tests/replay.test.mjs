@@ -4,6 +4,8 @@
 // The fake inbox moves each session's files from its branches to main one check later and writes the terminal two
 // checks later, so branch, main and terminal reads are all exercised. expected_synthetic_a15.json replays the
 // synthetic bars with MODE.json a15_from 2026-11-09 (§16.18 A15): from that day on no check is `trade_open`.
+// expected_synthetic_a16.json adds a16_from 2026-11-16 (§16.18 A16): from that day on the day cap and the fire guard
+// are 10; the days before it equal expected_synthetic_a15.json.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -13,7 +15,8 @@ import { HERE, MIN, W, World, iso, loadBars, trades } from "./helpers.mjs";
 
 async function replay(barsName, expectedName) {
   const exp = JSON.parse(readFileSync(join(HERE, "fixtures", expectedName), "utf8"));
-  const world = new World({ bars: loadBars(barsName), a14_from: exp.a14_from, a15_from: exp.a15_from });
+  const world = new World({ bars: loadBars(barsName), a14_from: exp.a14_from, a15_from: exp.a15_from,
+    a16_from: exp.a16_from });
   const P = "analyst/canary/";
   const got = {};
   for (const d of Object.keys(exp.days).sort()) {
@@ -69,6 +72,7 @@ for (const [bars, expected] of [
   ["bars_recorded.json", "expected_recorded.json"],
   ["bars_synthetic.json", "expected_synthetic.json"],
   ["bars_synthetic.json", "expected_synthetic_a15.json"],
+  ["bars_synthetic.json", "expected_synthetic_a16.json"],
 ]) {
   test(`replay ${bars}: every check's decision and every wake equal the Python reference`, async () => {
     const { exp, got, world } = await replay(bars, expected);

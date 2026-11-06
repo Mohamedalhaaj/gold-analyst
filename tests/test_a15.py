@@ -520,7 +520,7 @@ def test_a_review_that_adds_and_the_closer_without_trade_open(tmp_path):
 
 def test_operational_keys_of_a14_and_a15():
     for k in ("A15|review_open|2026-11-10_W1b", "A15|open_cap|x", "A15|a15_from|x", "A15|lesson_source|x",
-              "A14|skipped_wrong|x", "A14|a14_from|x"):
+              "A14|skipped_wrong|x", "A14|a14_from|x", "A16|a16_from|x"):
         assert state.operational(k), k
     assert not state.operational("A15|unsettled|x") and not state.operational("A5|x")
 

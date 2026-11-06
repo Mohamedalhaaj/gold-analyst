@@ -137,6 +137,10 @@ test("R(T): order of the steps, scheduled checks, holidays, gap, consumed condit
   const six = Array.from({ length: 6 }, (_, i) => trig(T0 - (i + 3) * 30 * MIN, "x"));
   assert.equal(W.ruleR(T0, DAY, six, [], allTrue).result, "day_cap");
   assert.equal(W.ruleR(T0, DAY, six.slice(1), [], allTrue).window.reason, "asia_up");
+  // §16.18 A16: with step 2's cap 10, six wakes do not cap and ten do
+  assert.equal(W.ruleR(T0, DAY, six, [], allTrue, 10).window.reason, "asia_up");
+  const ten = Array.from({ length: 10 }, (_, i) => trig(T0 - (i + 3) * 30 * MIN, "x"));
+  assert.equal(W.ruleR(T0, DAY, ten, [], allTrue, 10).result, "day_cap");
   // scheduled check: the window even with a wake 30 min earlier, and even on a holiday
   const s = W.ruleR(at(`${DAY}T09:30:00Z`), DAY, [trig(at(`${DAY}T09:00:00Z`), "y_low")], [], undefined);
   assert.deepEqual([s.result, s.window.name, s.window.kind, s.window.reason], ["window", "W1b", "second_look", null]);

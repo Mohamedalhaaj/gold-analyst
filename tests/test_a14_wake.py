@@ -132,6 +132,10 @@ def test_order_gap_consumed_cap_open_trade_holiday_and_scheduled():
                              "reason": "move"}])["result"] == "none"   # g = 30 < 60
     six = [{"check_utc": u(2026, 11, 10, h, 0), "kind": "trigger", "reason": None} for h in range(1, 7)]
     assert at(T, up, wakes=six)["result"] == "day_cap"
+    # §16.18 A16: with step 2's cap 10 six wakes do not cap, ten do
+    assert wake.rule(D, T, up, six, [], False, wake.DAY_CAP_A16)["result"] == "window"
+    ten = six + [{"check_utc": u(2026, 11, 10, 7, m), "kind": "trigger", "reason": None} for m in (5, 10, 15, 20)]
+    assert wake.rule(D, T, up, ten, [], False, wake.DAY_CAP_A16)["result"] == "day_cap"
     trade = {"call_id": "2026-11-10_W1", "check_utc": u(2026, 11, 10, 7, 30), "exit_utc": u(2026, 11, 10, 12, 0)}
     assert at(T, up, trades=[trade])["result"] == "trade_open"
     assert at(u(2026, 11, 10, 11, 30), up, trades=[trade])["result"] != "trade_open"   # entry == exit is allowed

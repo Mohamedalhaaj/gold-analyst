@@ -153,6 +153,33 @@ test("day cap: six wakes → `day_cap`; fire cap: six fires logged → `fire_cap
   assert.equal(fc.fires.length, 0);
 });
 
+const EARLY10 = [...EARLY, "2026-11-04T07:00:00Z", "2026-11-04T08:00:00Z", "2026-11-04T08:30:00Z",
+  "2026-11-04T09:00:00Z"];
+
+test("A16: from a16_from on the day cap and the fire guard are 10; the day before keeps 6", async () => {
+  const six = new World({ bars: BARS, a15_from: "2026-11-02", a16_from: D });
+  await seedTriggers(six, EARLY.slice(0, 5), true);
+  onMain(six, win("W1"), "stay_out", { terminal: true });
+  assert.equal((await check(six, `${D}T09:30:00Z`)).decision, "W1b", "six wakes on an A16 day: not capped");
+  const ten = new World({ bars: BARS, a15_from: "2026-11-02", a16_from: D });
+  await seedTriggers(ten, [...EARLY.slice(0, 5), ...EARLY10.slice(6, 10)], true);
+  onMain(ten, win("W1"), "stay_out", { terminal: true });
+  const e = await check(ten, `${D}T09:30:00Z`);
+  assert.deepEqual([e.decision, e.fired], ["day_cap", false], "ten wakes: capped");
+  const fc = new World({ bars: BARS, a15_from: "2026-11-02", a16_from: D });
+  await seedTriggers(fc, EARLY10, false); // ten fires that never got an attempt
+  const f = await check(fc, `${D}T09:30:00Z`);
+  assert.deepEqual([f.decision, f.fired, f.tries], ["fire_cap", false, 0]);
+  assert.equal(fc.fires.length, 0);
+  const nine = new World({ bars: BARS, a15_from: "2026-11-02", a16_from: D });
+  await seedTriggers(nine, EARLY10.slice(0, 9), false);
+  assert.equal((await check(nine, `${D}T09:30:00Z`)).decision, "W1b", "nine fires logged: under the guard");
+  const before = new World({ bars: BARS, a15_from: "2026-11-02", a16_from: "2026-11-05" }); // D is before a16_from
+  await seedTriggers(before, EARLY.slice(0, 5), true);
+  onMain(before, win("W1"), "stay_out", { terminal: true });
+  assert.equal((await check(before, `${D}T09:30:00Z`)).decision, "day_cap", "a day before a16_from keeps 6");
+});
+
 test("consumed conditions come from the attempts' wake.reason", async () => {
   // y_low consumed by a trigger at 06:00 (g = 360 at 12:00), every other condition false or consumed too
   const world = new World({ bars: BARS });

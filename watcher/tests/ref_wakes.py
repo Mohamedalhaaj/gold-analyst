@@ -9,10 +9,12 @@ wake_freq_replay.py can show it equals wake_freq.simulate on the same bars.
 §16.18 A15 (R-AN-89, R-AN-91): from a15_from on, R(T) has no step 1: open trades never gate a check, so a window
 during an open trade is fired like any other (it becomes a review in its session).
 
+§16.18 A16 (R-AN-89, R-AN-91): from a16_from on, the day cap (step 2) and the fire guard are 10 instead of 6.
+
 Standard library only.
 
 usage:
-  python3 ref_wakes.py expected <bars.json> <first_day> <last_day> [<a15_from>]
+  python3 ref_wakes.py expected <bars.json> <first_day> <last_day> [<a15_from> [<a16_from>]]
                                                                      -> expected watcher decisions and wakes (stdout)
   python3 ref_wakes.py synthetic <seed>                               -> the synthetic bar fixture (stdout)
 """
@@ -119,10 +121,11 @@ def conditions(T, d, bars):
     return out
 
 
-def replay(bars, days, outcome=None, a15_from=None):
+def replay(bars, days, outcome=None, a15_from=None, a16_from=None):
     """The watcher's decision at every check of each day and the wakes, with every woken window attempted (unless
     `start` refuses it as a holiday of its own exchange) and its outcome from `outcome` (default trades()). For days
-    >= a15_from (a date or None) open trades are not formed (A15)."""
+    >= a15_from (a date or None) open trades are not formed (A15); for days >= a16_from the day cap and the fire
+    guard are 10 instead of 6 (A16)."""
     outcome = outcome or trades
     out = {}
     for d in days:
@@ -135,13 +138,14 @@ def replay(bars, days, outcome=None, a15_from=None):
         woken = []  # (check, kind, reason, exit, called, call_id)
         checks = []
         fires = 0
+        cap = 10 if (a16_from and d >= a16_from) else 6
         for T in grid(d):
             E = [w for w in woken if w[0] < T]
             O = [] if (a15_from and d >= a15_from) else [w for w in E if w[4] and w[3] > T + 30 * M]
             win = None
             if O:
                 dec = "trade_open"
-            elif len(E) >= 6:
+            elif len(E) >= cap:
                 dec = "day_cap"
             else:
                 hit = [n for n, v in sched.items() if v[2] == T]
@@ -165,7 +169,7 @@ def replay(bars, days, outcome=None, a15_from=None):
                                 win = (T, "trigger", c, T + 270 * M, f"{ds}_T{T:%H%M}")
                                 break
             if dec != "fixed" and dec not in ("trade_open", "day_cap", "none"):
-                if fires >= 6:
+                if fires >= cap:
                     dec, win = "fire_cap", None
                 else:
                     fires += 1
@@ -277,10 +281,13 @@ def main(argv):
         a, b = dt.date.fromisoformat(argv[2]), dt.date.fromisoformat(argv[3])
         days = [a + dt.timedelta(days=i) for i in range((b - a).days + 1)]
         a15 = dt.date.fromisoformat(argv[4]) if len(argv) > 4 else None
+        a16 = dt.date.fromisoformat(argv[5]) if len(argv) > 5 else None
         doc = {"fixture": argv[1].rsplit("/", 1)[-1], "a14_from": argv[2]}
         if a15:
             doc["a15_from"] = argv[4]
-        doc["days"] = replay(bars, days, a15_from=a15)
+        if a16:
+            doc["a16_from"] = argv[5]
+        doc["days"] = replay(bars, days, a15_from=a15, a16_from=a16)
         json.dump(doc, sys.stdout, separators=(",", ":"))
         return
     raise SystemExit(__doc__)
