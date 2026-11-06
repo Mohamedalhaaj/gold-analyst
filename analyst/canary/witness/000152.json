@@ -1,0 +1,50 @@
+{
+ "comment": {
+  "body_sha256": "5dcc733ba61c881e484e992021e9a1b03a533036a47beae33fc4f126054b78cc",
+  "created_utc": "2026-11-06T18:21:46Z",
+  "id": 6692189588,
+  "issue": 1
+ },
+ "file_sha256": "0a16ba7a0e672327e94a4cc021a85240faa97d745d968c55c12cf651751c7f64",
+ "id": "2026-11-06_W2b",
+ "kind": "attempt",
+ "mode": "canary",
+ "path": "analyst/canary/attempts/2026-11-06_W2b_1.json",
+ "push": {
+  "activity_id": 49266765739,
+  "activity_type": "branch_creation",
+  "activity_utc": "2026-11-06T16:01:44Z",
+  "actor": "Mohamedalhaaj",
+  "after": "35880dca6b34348af711a2861bddf3c9479868cd",
+  "before": "0000000000000000000000000000000000000000",
+  "ref": "refs/heads/claude/analyst-canary-attempt-2026-11-06_W2b-1",
+  "repo": "Mohamedalhaaj/gold-analyst-inbox"
+ },
+ "reason": null,
+ "run": {
+  "attempt": 1,
+  "created_utc": "2026-11-06T18:21:33Z",
+  "event": "schedule",
+  "id": 42269967810,
+  "workflow": "analyst-merge"
+ },
+ "schema": "analyst-witness/1",
+ "seq": 152,
+ "status": "accepted",
+ "terminal": null,
+ "window": {
+  "deadline_utc": "2026-11-06T16:15:00Z",
+  "entry_utc": "2026-11-06T16:30:00Z",
+  "time_source": "activity",
+  "time_utc": "2026-11-06T16:01:44Z",
+  "void": false
+ },
+ "writes": [
+  {
+   "path": "analyst/canary/attempts/2026-11-06_W2b_1.json",
+   "record": null,
+   "sha256": "0a16ba7a0e672327e94a4cc021a85240faa97d745d968c55c12cf651751c7f64"
+  }
+ ],
+ "written_utc": "2026-11-06T18:21:46Z"
+}
