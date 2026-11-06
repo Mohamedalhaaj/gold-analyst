@@ -33,7 +33,8 @@ the day before to L_d = 16:30 UTC on EDT, 17:30 on EST). Then:
 3. The fire is one POST to FIRE_URL with `Authorization: Bearer <FIRE_TOKEN>`, `anthropic-beta:
    experimental-cc-routine-2026-04-01`, `anthropic-version: 2023-06-01` and the body `{}` (no text). 2xx is a fire;
    after 429, 5xx or a connection error it retries once 60 s later; no try starts after T + 10 min. A seventh fire on a
-   model day is logged `fire_cap` and not sent.
+   model day is logged `fire_cap` and not sent. From MODE.json `a16_from` on (§16.18 A16) R's day cap and this guard
+   are 10: `day_cap` at ten wakes, `fire_cap` at an eleventh fire.
 4. One log entry per check in KV (`log/<model_day>`): `{check_utc, model_day, decision, fired, http, tries, utc}`.
    `GET /log?day=YYYY-MM-DD` returns a model day's entries; it is the only route (no `/status`) and holds no secret.
 

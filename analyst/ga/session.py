@@ -246,16 +246,17 @@ class Session:
         if paths.a15_applies(mode_doc, w.day):
             trades = []                              # R(T) without step 1: open trades never gate (§16.18 A15)
         T = w.check_utc
+        cap = paths.day_cap(mode_doc, w.day)         # 10 from a16_from on (§16.18 A16), else 6
         if wake.open_trades(trades, T):
             raise Refusal("trade_open")
-        if len(wake.earlier(wakes, T)) >= wake.DAY_CAP:
+        if len(wake.earlier(wakes, T)) >= cap:
             raise Refusal("day_cap")
         if w.kind != "trigger":
             return w, n, records.wake_of(w)
         prov, bars = self._wake_request(T)
         if prov["status"] != "ok":
             raise Refusal(f"wake_data td_{prov['reason']}")
-        r = wake.rule(w.day, T, bars, wakes, trades, hol.any_row(w.day))
+        r = wake.rule(w.day, T, bars, wakes, trades, hol.any_row(w.day), cap)
         if r["result"] != "window" or r["tag"] != w.tag:
             raise Refusal("not_triggered")
         return w, n, records.wake_of(w, r["reason"], prov)

@@ -14,6 +14,9 @@
 // and becomes a review in its session. Its reads (for E(T)), request, fire, 6-a-day limit, log and secrets are
 // unchanged; days before a15_from keep the A14 rule.
 //
+// §16.18 A16 (R-AN-89, R-AN-91): for model days >= MODE.json a16_from R's day cap (step 2) and the fire guard are 10
+// instead of 6; every other step, read, request, log and secret is unchanged.
+//
 // Secrets (Worker secrets, never in a file, a log line or a response): TD_API_KEY, FIRE_URL, FIRE_TOKEN.
 // Binding: WATCHER_LOG (Workers KV). The only route is GET /log?day=YYYY-MM-DD.
 
@@ -34,6 +37,8 @@ const FIRE_RETRY_AFTER_MS = 60_000;
 const FIRE_LAST_MS = 10 * MIN; // a try only while now <= T + 10 min
 const FIRE_CAP = 6; // fires a model day (a guard; R's cap of 6 wakes is the rule)
 const DAY_CAP = 6; // R-AN-89 step 2
+const FIRE_CAP_A16 = 10; // §16.18 A16: from a16_from on
+const DAY_CAP_A16 = 10; // §16.18 A16: from a16_from on
 const READ_TIMEOUT_MS = 10_000;
 const CONDITIONS = ["asia_up", "asia_dn", "y_high", "y_low", "move"];
 const LONDON = "Europe/London";
@@ -241,11 +246,12 @@ function conditionsAt(T, d, bars) {
  * R(T) for T in G(d). E: windows of d with a check earlier than T that have an attempt ({check, kind, reason});
  * O: windows of d with check < T whose call is a buy or a sell and whose exit_utc > T + 30 min.
  * conds: the five conditions at T, or undefined when not yet known (then a due trigger gives "trigger_due").
+ * cap: step 2's cap of d (10 from a16_from on, §16.18 A16).
  * Returns {result: "trade_open" | "day_cap" | "window" | "none" | "trigger_due", window?, why?, g}.
  */
-function ruleR(T, d, E, O, conds) {
+function ruleR(T, d, E, O, conds, cap = DAY_CAP) {
   if (O.length > 0) return { result: "trade_open" };
-  if (E.length >= DAY_CAP) return { result: "day_cap" };
+  if (E.length >= cap) return { result: "day_cap" };
   const sched = scheduledWindows(d).find((w) => w.check === T);
   if (sched) return { result: "window", window: { ...sched, reason: null } };
   if (isHolidayDay(d)) return { result: "none", why: "holiday" };
@@ -481,6 +487,9 @@ async function runCheck(scheduledMs, env, io) {
   if (modeDoc && (a14 === null || d < a14)) return null; // A14 does not apply to d
   const a15 = modeDoc && typeof modeDoc.a15_from === "string" ? modeDoc.a15_from : null;
   const reviews = a15 !== null && d >= a15; // A15: no O(T), never `trade_open`
+  const a16 = modeDoc && typeof modeDoc.a16_from === "string" ? modeDoc.a16_from : null;
+  const cap = a16 !== null && d >= a16 ? DAY_CAP_A16 : DAY_CAP; // A16: 10 from a16_from on
+  const fireCap = a16 !== null && d >= a16 ? FIRE_CAP_A16 : FIRE_CAP;
   const log = await readLog(env, d);
   if (log.some((e) => e.check_utc === isoZ(T))) return null; // a repeated run of a check that already acted
   const entry = { check_utc: isoZ(T), model_day: d, decision: "none", fired: false, http: null, tries: 0, utc: null };
@@ -513,14 +522,14 @@ async function runCheck(scheduledMs, env, io) {
     if (!reviews && s.called && w.exit > T + 30 * MIN) O.push(w);
   });
 
-  let r = ruleR(T, d, E, O, undefined);
+  let r = ruleR(T, d, E, O, undefined, cap);
   if (r.result === "trigger_due") {
     const td = await tdRequest(io, env, d, T);
     if (td.status !== "ok") {
       entry.decision = `td_${td.reason}`;
       return finish();
     }
-    r = ruleR(T, d, E, O, conditionsAt(T, d, td.bars));
+    r = ruleR(T, d, E, O, conditionsAt(T, d, td.bars), cap);
   }
   if (r.result === "trade_open" || r.result === "day_cap") {
     entry.decision = r.result;
@@ -536,7 +545,7 @@ async function runCheck(scheduledMs, env, io) {
     return finish();
   }
   entry.decision = w.kind === "trigger" ? `trigger:${w.reason}` : w.name;
-  if (firesToday >= FIRE_CAP) {
+  if (firesToday >= fireCap) {
     entry.decision = "fire_cap";
     return finish();
   }

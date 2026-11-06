@@ -120,6 +120,26 @@ def a15_applies(mode_doc, day):
     return a is not None and day >= a
 
 
+def a16_from(mode_doc):
+    """MODE.json `a16_from` as a date, or None (§16.18 A16, R-AN-5): the first model day whose day cap (R-AN-89
+    step 2, the closer's `skipped:day_cap`, the watcher's fire guard) is 10 instead of 6. Its validity (a15_from set,
+    a16_from >= a15_from, the build and the watcher on inbox main the evening before) is the judge's A16 `a16_from`
+    check; the code applies the value as written, as it does a15_from."""
+    v = (mode_doc or {}).get("a16_from")
+    return dt.date.fromisoformat(v) if v else None
+
+
+def a16_applies(mode_doc, day):
+    a = a16_from(mode_doc)
+    return a is not None and day >= a
+
+
+def day_cap(mode_doc, day):
+    """R-AN-89 step 2's cap for model day `day`: 10 from a16_from on (§16.18 A16), else 6."""
+    from . import wake
+    return wake.DAY_CAP_A16 if a16_applies(mode_doc, day) else wake.DAY_CAP
+
+
 def read_params(view):
     return view.read_json(PARAMS_PATH)
 

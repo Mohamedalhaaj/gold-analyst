@@ -762,8 +762,8 @@ class Merge:
     def _skip_status(self, mode, w):
         """R-AN-39 step 2 (§16.18 A14), for a W1, W2, W1b or W2b window without an attempt: (`skipped:trade_open`,
         the open trade's call_id) when an earlier window of its day has terminal `called` and an exit_utc later
-        than w's entry_utc; else (`skipped:day_cap`, the count) when 6 or more earlier windows of its day have an
-        accepted attempt; else None."""
+        than w's entry_utc; else (`skipped:day_cap`, the count) when 6 (10 from a16_from on, §16.18 A16) or more
+        earlier windows of its day have an accepted attempt; else None."""
         if w.kind == "trigger":
             return None
         earlier = self.earlier_of_day(mode, w)
@@ -772,7 +772,7 @@ class Merge:
             if t.get("status") == "called" and x.exit_utc > w.entry_utc:
                 return "skipped:trade_open", x.call_id
         n = sum(1 for x in earlier if witness.accepted_attempts(self.view, mode, x.call_id))
-        if n >= 6:
+        if n >= paths.day_cap(self.mode_doc, w.day):
             return "skipped:day_cap", str(n)
         return None
 

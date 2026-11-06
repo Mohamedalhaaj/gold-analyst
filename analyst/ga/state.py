@@ -64,6 +64,7 @@ OPERATIONAL_A13 = ("guard_not_enforced", "guard_config", "routine_project", "cc_
 # A14's table (skipped_wrong, a14_from) and A15's open sets, cap, pairing day, lesson source (R-AN-55, §16.18 A15)
 OPERATIONAL_A14 = ("skipped_wrong", "a14_from")
 OPERATIONAL_A15 = ("review_open", "open_cap", "a15_from", "lesson_source")
+OPERATIONAL_A16 = ("a16_from",)             # the day cap's start day (§16.18 A16)
 LEDGER_COLS = ["call_id", "model_day", "window", "class", "terminal_status", "status", "detail", "action", "side",
                "stop_mult", "target_mult", "confidence", "D_ref", "S", "T", "lock_utc", "attempts", "entry_utc",
                "exit_utc", "P_e", "X", "Tg", "exit_minute_utc", "P_x", "reason", "fill", "gross_usd", "cost_usd",
@@ -188,15 +189,16 @@ def operational(key):
     guard_not_enforced, guard_config), and since its third review a routine in a claude.ai project or a guarded
     session on a Claude Code version below the guard's minimum or of an unknown version (A13 routine_project,
     cc_version_below, cc_version_unknown); since §16.18 A15 also A14 skipped_wrong and a14_from and A15 review_open,
-    open_cap, a15_from and lesson_source. It pauses while the verdict carries it and never retires the analyst. A13
-    forbidden_attempt and forbidden_executed are integrity keys."""
+    open_cap, a15_from and lesson_source; since §16.18 A16 also A16 a16_from. It pauses while the verdict carries it
+    and never retires the analyst. A13 forbidden_attempt and forbidden_executed are integrity keys."""
     if key.startswith(("A0|", "system_error:")):
         return True
     parts = key.split("|")
     return len(parts) >= 2 and ((parts[0] == "A12" and parts[1] in OPERATIONAL_A12)
                                 or (parts[0] == "A13" and parts[1] in OPERATIONAL_A13)
                                 or (parts[0] == "A14" and parts[1] in OPERATIONAL_A14)
-                                or (parts[0] == "A15" and parts[1] in OPERATIONAL_A15))
+                                or (parts[0] == "A15" and parts[1] in OPERATIONAL_A15)
+                                or (parts[0] == "A16" and parts[1] in OPERATIONAL_A16))
 
 
 def period_starts(mode_doc):

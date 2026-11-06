@@ -18,6 +18,9 @@ A14) apply the same text. Nothing here reads a file, a clock or the network.
 - R(T), for T in G(d): O(T) → trade_open; |E(T)| >= 6 → day_cap; a scheduled check → that window (fixed or
   second_look, reason null); a holiday-table day → none; g(T) < 60 → none; the first true condition not consumed
   (move only when g(T) >= 120) → the trigger window `<d>_T<hhmm>`; else none.
+
+§16.18 A16 (R-AN-89): for model days >= MODE.json a16_from the cap of step 2 is 10 (DAY_CAP_A16) instead of 6;
+callers pass it as `cap` (paths.day_cap). Every other step is unchanged.
 """
 import datetime as dt
 import math
@@ -27,6 +30,7 @@ from . import clock, rec
 
 CONDITIONS = ("asia_up", "asia_dn", "y_high", "y_low", "move")
 DAY_CAP = 6
+DAY_CAP_A16 = 10                                             # §16.18 A16: from a16_from on
 PRIOR_DAYS = 20
 MIN_GAP = 60
 MOVE_GAP = 120
@@ -105,14 +109,15 @@ def gap_min(E, T):
     return (T - max(x["check_utc"] for x in E)).total_seconds() / 60.0
 
 
-def rule(d, T, bars, wakes, trades, holiday):
+def rule(d, T, bars, wakes, trades, holiday, cap=DAY_CAP):
     """R(T) for T in G(d): {"result": trade_open | day_cap | window | none, "tag", "kind", "reason"}. `bars` may be
-    None for a scheduled check (steps 1-3 need no bar); `holiday` is True when d has a row of either exchange."""
+    None for a scheduled check (steps 1-3 need no bar); `holiday` is True when d has a row of either exchange; `cap`
+    is step 2's cap of d (paths.day_cap: 10 from a16_from on, §16.18 A16)."""
     out = {"result": "none", "tag": None, "kind": None, "reason": None}
     if open_trades(trades, T):
         return dict(out, result="trade_open")
     E = earlier(wakes, T)
-    if len(E) >= DAY_CAP:
+    if len(E) >= cap:
         return dict(out, result="day_cap")
     sched = clock.scheduled_checks(d)
     if T in sched:
