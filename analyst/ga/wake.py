@@ -21,6 +21,12 @@ A14) apply the same text. Nothing here reads a file, a clock or the network.
 
 §16.18 A16 (R-AN-89): for model days >= MODE.json a16_from the cap of step 2 is 10 (DAY_CAP_A16) instead of 6;
 callers pass it as `cap` (paths.day_cap). Every other step is unchanged.
+
+§16.18 A17 (A17-R2, A17-R3): for model days >= MODE.json a17_from the caller passes `a17=True` and `subject`, the
+call_id of the trade of d whose exit is T + 30 min and that no earlier window closed, with exit <= day_end(d) − 60
+min (review.time_subject), or None. R(T) then runs over G_X(d): steps 2 and 3 as before, step 4 (holiday → none),
+then step 4b: a subject → the time window `<d>_X<hhmm>` (kind time, reason null); then, for T in G(d) only, steps 5
+and 6 as before; beyond L_d, none.
 """
 import datetime as dt
 import math
@@ -109,10 +115,11 @@ def gap_min(E, T):
     return (T - max(x["check_utc"] for x in E)).total_seconds() / 60.0
 
 
-def rule(d, T, bars, wakes, trades, holiday, cap=DAY_CAP):
-    """R(T) for T in G(d): {"result": trade_open | day_cap | window | none, "tag", "kind", "reason"}. `bars` may be
-    None for a scheduled check (steps 1-3 need no bar); `holiday` is True when d has a row of either exchange; `cap`
-    is step 2's cap of d (paths.day_cap: 10 from a16_from on, §16.18 A16)."""
+def rule(d, T, bars, wakes, trades, holiday, cap=DAY_CAP, subject=None, a17=False):
+    """R(T) for T in G(d) (G_X(d) with `a17`): {"result": trade_open | day_cap | window | none, "tag", "kind",
+    "reason"}. `bars` may be None for a scheduled check or a time window (steps 1-4b need no bar); `holiday` is True
+    when d has a row of either exchange; `cap` is step 2's cap of d (paths.day_cap: 10 from a16_from on, §16.18 A16);
+    `subject` and `a17` as in the module text (§16.18 A17)."""
     out = {"result": "none", "tag": None, "kind": None, "reason": None}
     if open_trades(trades, T):
         return dict(out, result="trade_open")
@@ -124,6 +131,10 @@ def rule(d, T, bars, wakes, trades, holiday, cap=DAY_CAP):
         tag = sched[T]
         return dict(out, result="window", tag=tag, kind=clock.KIND[tag])
     if holiday:
+        return out
+    if a17 and subject is not None:                       # step 4b (§16.18 A17-R3)
+        return dict(out, result="window", tag=clock.time_tag(T), kind="time")
+    if a17 and T not in clock.check_grid(d):              # beyond L_d only the time step gives a window
         return out
     g = gap_min(E, T)
     if g < MIN_GAP:

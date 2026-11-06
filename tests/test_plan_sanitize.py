@@ -150,7 +150,7 @@ def test_a_context_2_call_keeps_the_old_key_set():
 def test_plan_schema_file_is_analyst_plan_3():
     from pathlib import Path
     doc = json.loads((Path(__file__).resolve().parents[1] / "analyst/schema/plan.schema.json").read_text("utf-8"))
-    assert doc["$id"] == "analyst-plan/3"                    # §16.18 A15: /2 plus hold, close, reverse, add
+    assert doc["$id"] == "analyst-plan/4"           # §16.18 A15: /2 plus hold, close, reverse, add; A17: extend
     trade, stay, _review = doc["oneOf"]
     assert "stay_out_reason" not in trade["properties"] and trade["additionalProperties"] is False
     assert stay["properties"]["stay_out_reason"] == {"enum": list(plan.STAY_OUT_REASONS)}

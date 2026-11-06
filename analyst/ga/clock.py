@@ -10,6 +10,10 @@
   day). Every new window: entry = check + 30 min, exit = entry + 240 min, deadline = entry − 15 min, span start =
   entry − 30 min. tday(x) = the UTC date of x + 2 h; G(d) = 22:30 UTC of d − 1 + k·30 min up to L_d =
   model_to_utc((d+1) 00:00) − 270 min. Window order is (model_day, entry_utc).
+- §16.18 A17 (A17-R1): time windows `<model_day>_X<hhmm>` (kind `time`, name `X`, hhmm = the check's UTC time): a
+  trade's exit is the time window's entry, its check 30 min before (entry = check + 30 min, exit = entry + 240 min,
+  deadline = entry − 15 min, span start = entry − 30 min, as for a trigger). G_X(d) = G(d) plus the checks L_d + 30
+  min .. day_end(d) − 90 min; day_end(d) = model_to_utc((d+1) 00:00) (17:00 New York).
 - busday_count(a, b) = numpy.busday_count with the Monday-Friday mask and no holidays (holidays not removed, R-C2).
 """
 import datetime as dt
@@ -31,12 +35,12 @@ HALF = dt.timedelta(minutes=30)
 WINDOWS = ("W1", "W2")
 SECOND_LOOKS = ("W1b", "W2b")
 SCHEDULED = WINDOWS + SECOND_LOOKS
-WINDOW_TYPES = SCHEDULED + ("T",)
+WINDOW_TYPES = SCHEDULED + ("T", "X")
 _SPEC = {"W1": (LONDON, (8, 0), (12, 0)), "W2": (NEW_YORK, (9, 30), (13, 30))}
-EXCHANGE = {"W1": "LSE", "W2": "NYSE", "W1b": "LSE", "W2b": "NYSE", "T": None}
-LOCAL_TZ = {"W1": LONDON, "W2": NEW_YORK, "W1b": LONDON, "W2b": NEW_YORK, "T": UTC}
-KIND = {"W1": "fixed", "W2": "fixed", "W1b": "second_look", "W2b": "second_look", "T": "trigger"}
-TAG_RE = r"W[12]b?|T(?:[01][0-9]|2[0-3])(?:00|30)"
+EXCHANGE = {"W1": "LSE", "W2": "NYSE", "W1b": "LSE", "W2b": "NYSE", "T": None, "X": None}
+LOCAL_TZ = {"W1": LONDON, "W2": NEW_YORK, "W1b": LONDON, "W2b": NEW_YORK, "T": UTC, "X": UTC}
+KIND = {"W1": "fixed", "W2": "fixed", "W1b": "second_look", "W2b": "second_look", "T": "trigger", "X": "time"}
+TAG_RE = r"W[12]b?|[TX](?:[01][0-9]|2[0-3])(?:00|30)"          # X: §16.18 A17 time windows
 CALL_ID_RE = re.compile(rf"([0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}})_({TAG_RE})")
 
 
@@ -114,9 +118,9 @@ def window_key(cid):
 
 
 def window_type(cid):
-    """W1, W2, W1b, W2b, or T for every trigger window (R-AN-47)."""
+    """W1, W2, W1b, W2b, T for every trigger window (R-AN-47), or X for every time window (§16.18 A17)."""
     _d, tag = parse_call_id(cid)
-    return "T" if tag.startswith("T") else tag
+    return tag[0] if tag[0] in "TX" else tag
 
 
 def tday(x):
@@ -127,6 +131,23 @@ def tday(x):
 def last_check(d):
     """L_d = model_to_utc((d+1) 00:00) − 270 min (R-AN-89)."""
     return model_to_utc(dt.datetime.combine(d + dt.timedelta(days=1), dt.time(0))) - dt.timedelta(minutes=270)
+
+
+def day_end(d):
+    """day_end(d) = model_to_utc((d+1) 00:00): 17:00 New York on d, the end of model day d's trading (R-AN-40)."""
+    return model_to_utc(dt.datetime.combine(d + dt.timedelta(days=1), dt.time(0)))
+
+
+def time_grid(d):
+    """G_X(d) (§16.18 A17-R1): G(d) plus the checks L_d + 30 min .. day_end(d) − 90 min; [] on a weekend."""
+    out = check_grid(d)
+    if not out:
+        return out
+    t, last = out[-1] + HALF, day_end(d) - dt.timedelta(minutes=90)
+    while t <= last:
+        out.append(t)
+        t += HALF
+    return out
 
 
 def check_grid(d):
@@ -156,8 +177,14 @@ def trigger_tag(check):
     return "T" + check.astimezone(UTC).strftime("%H%M")
 
 
+def time_tag(check):
+    """`X<hhmm>`: the time window of check `check` (§16.18 A17-R1)."""
+    return "X" + check.astimezone(UTC).strftime("%H%M")
+
+
 def trigger_check(d, tag):
-    """The check time of trigger tag `T<hhmm>` of model day d (22:00-23:59 UTC: the day before)."""
+    """The check time of trigger tag `T<hhmm>` (or time tag `X<hhmm>`) of model day d (22:00-23:59 UTC: the day
+    before)."""
     hh, mm = int(tag[1:3]), int(tag[3:5])
     base = d - dt.timedelta(days=1) if hh >= 22 else d
     return dt.datetime(base.year, base.month, base.day, hh, mm, tzinfo=UTC)
@@ -169,10 +196,16 @@ def valid_trigger(d, tag):
     return t in check_grid(d) and t not in scheduled_checks(d)
 
 
+def valid_time(d, tag):
+    """True when X<hhmm> is a check of G_X(d) that is not a scheduled check (§16.18 A17-R1, R-AN-33)."""
+    t = trigger_check(d, tag)
+    return t in time_grid(d) and t not in scheduled_checks(d)
+
+
 class Window:
     """One window of one model day. `tag` is the call_id's suffix (W1, W2, W1b, W2b or T<hhmm>); `name` is the
-    window type that the call file and the context carry (W1, W2, W1b, W2b or T, R-AN-4); `kind` is fixed,
-    second_look or trigger (R-AN-89)."""
+    window type that the call file and the context carry (W1, W2, W1b, W2b, T or X, R-AN-4); `kind` is fixed,
+    second_look, trigger or time (R-AN-89, §16.18 A17)."""
 
     def __init__(self, day, tag):
         if tag in _SPEC:
@@ -184,14 +217,14 @@ class Window:
             entry = Window(day, tag[:2]).entry_utc + dt.timedelta(minutes=120)
             exit_ = entry + dt.timedelta(minutes=240)
             span = HALF
-        elif re.fullmatch(r"T(?:[01][0-9]|2[0-3])(?:00|30)", tag or ""):
+        elif re.fullmatch(r"[TX](?:[01][0-9]|2[0-3])(?:00|30)", tag or ""):          # trigger or time window
             entry = trigger_check(day, tag) + HALF
             exit_ = entry + dt.timedelta(minutes=240)
             span = HALF
         else:
             raise ValueError(tag)
         self.day, self.tag = day, tag
-        self.name = "T" if tag.startswith("T") else tag
+        self.name = tag[0] if tag[0] in "TX" else tag
         self.kind = KIND[self.name]
         self.call_id = call_id(day, tag)
         self.entry_utc, self.exit_utc = entry, exit_

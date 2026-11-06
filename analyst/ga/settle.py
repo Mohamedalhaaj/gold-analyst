@@ -26,6 +26,12 @@ exit_utc for a time exit or R-AN-42's gap at X after the loop, m for a managed e
 closed_by is set, else exit_utc. For reason `managed`, mfe_usd and mae_usd run from t0 through m − 1. The record is
 `analyst-settled/2`: `/1` plus managed_utc, closed_by, x_end_utc, weight, cluster after exit_utc and unmanaged, reviews
 after opposite, with `mode` and `class` canary for a canary record.
+
+§16.18 A17 (A17-R9): for model days >= a17_from a trade extended by its time window runs over [t0, x_exit) with
+x_exit = day_end(d) (with_exit), a closing window's managed exit possibly after exit_utc; every trade with exit_utc <=
+day_end(d) − 60 min also gets `at_4h` (over [t0, exit_utc)) and `to_day_end` (over [t0, day_end(d))), with no managed
+exit (time_block). The record is `analyst-settled/3`: `/2` plus `time` right after `reviews`; `exit_utc` stays the
+call file's. A time window has no settled record and no twin.
 """
 import datetime as dt
 
@@ -33,6 +39,7 @@ from . import clock, paths, rec, store
 
 SETTLED_SCHEMA = "analyst-settled/1"
 SETTLED_SCHEMA_A15 = "analyst-settled/2"
+SETTLED_SCHEMA_A17 = "analyst-settled/3"                     # §16.18 A17-R9
 TWIN_SCHEMA = "analyst-twin/1"
 ALLOWANCE = 0.10
 STRESS_ADD = 0.25
@@ -262,9 +269,40 @@ def outcomes(m, w, call, rows_by_key, managed=None):
             "x_end": x_end}
 
 
-def settled_record(view, w, call, terminal, cls, m, rows_by_key, now, run_id, head_sha, mode="live", a15=None):
+class _Span:
+    """A window seen with another exit: the trade of `w` run to `x_exit` (§16.18 A17-R9)."""
+
+    def __init__(self, w, x_exit):
+        self.day, self.call_id, self.name, self.tag = w.day, w.call_id, w.name, getattr(w, "tag", None)
+        self.entry_utc, self.exit_utc = w.entry_utc, x_exit
+
+
+def with_exit(w, x_exit):
+    """w itself when x_exit is its exit_utc, else w run to x_exit (an extended trade)."""
+    return w if x_exit == w.exit_utc else _Span(w, x_exit)
+
+
+def time_block(m, w, call, rows_by_key, x_call_id, x_status, extended, x_exit):
+    """The settled record's `time` (§16.18 A17-R9): the time window's call_id and terminal status (or None), whether it
+    extended the trade, x_exit, and the two descriptive outcomes, null for a trade whose exit is later than
+    day_end(d) − 60 min."""
+    end = clock.day_end(w.day)
+    a4 = to_end = None
+    if w.exit_utc <= end - dt.timedelta(minutes=60):
+        if is_void(rows_by_key, w):
+            a4, to_end = full_stop(call["S"], "void"), full_stop(call["S"], "void")
+        else:
+            a4 = trade(m, w, call["side"], call["S_dimes"], call["T_dimes"])[0]
+            to_end = trade(m, with_exit(w, end), call["side"], call["S_dimes"], call["T_dimes"])[0]
+    return {"call_id": x_call_id, "status": x_status, "extended": bool(extended), "x_exit_utc": rec.iso(x_exit),
+            "at_4h": a4, "to_day_end": to_end}
+
+
+def settled_record(view, w, call, terminal, cls, m, rows_by_key, now, run_id, head_sha, mode="live", a15=None,
+                   a17=None):
     """The settled record (R-AN-46). `a15` (model days >= a15_from): {managed_utc, closed_by, weight, cluster, reviews,
-    res (outcomes() of the trade)} gives `analyst-settled/2` (R-AN-93); without it the record is `/1` as before."""
+    res (outcomes() of the trade)} gives `analyst-settled/2` (R-AN-93); without it the record is `/1` as before.
+    `a17` (model days >= a17_from): the `time` block (time_block) gives `analyst-settled/3` (§16.18 A17-R9)."""
     plan_ = call["plan"]
     side = call["side"]
     if a15 is not None:
@@ -274,7 +312,8 @@ def settled_record(view, w, call, terminal, cls, m, rows_by_key, now, run_id, he
     _days, inputs = day_inputs(rows_by_key, w)
     days_b = view.read(store.DAYS_PATH) or b""
     doc = {
-        "schema": SETTLED_SCHEMA if a15 is None else SETTLED_SCHEMA_A15, "call_id": w.call_id, "mode": mode,
+        "schema": SETTLED_SCHEMA if a15 is None else SETTLED_SCHEMA_A17 if a17 is not None else SETTLED_SCHEMA_A15,
+        "call_id": w.call_id, "mode": mode,
         "window": w.name, "model_day": w.day.isoformat(), "class": cls, "action": plan_["action"], "side": side,
         "stop_mult": call["stop_mult"], "target_mult": call["target_mult"], "D_ref": call["d_ref"]["D_ref"],
         "S": call["S"], "T": call["T"], "S_dimes": call["S_dimes"], "T_dimes": call["T_dimes"],
@@ -286,6 +325,8 @@ def settled_record(view, w, call, terminal, cls, m, rows_by_key, now, run_id, he
     doc.update(outcome=res["outcome"], opposite=res["opposite"])
     if a15 is not None:
         doc.update(unmanaged=res["unmanaged"], reviews=a15["reviews"])
+    if a17 is not None:
+        doc["time"] = a17
     doc.update({
         "path_summary": res["path_summary"],
         "call": {"action": plan_["action"], "stop_mult": plan_.get("stop_mult"),

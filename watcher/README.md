@@ -35,6 +35,11 @@ the day before to L_d = 16:30 UTC on EDT, 17:30 on EST). Then:
    after 429, 5xx or a connection error it retries once 60 s later; no try starts after T + 10 min. A seventh fire on a
    model day is logged `fire_cap` and not sent. From MODE.json `a16_from` on (§16.18 A16) R's day cap and this guard
    are 10: `day_cap` at ten wakes, `fire_cap` at an eleventh fire.
+   From MODE.json `a17_from` on (§16.18 A17) the watcher acts at the checks of G_X(d), which runs on to day_end(d) −
+   90 min; it reads every candidate's call status and plan action and adds the time windows it fired. A check whose
+   T + 30 min is the exit of a `called` trade (no `review_close` or `called` reverse entering since its entry, and at
+   least 60 minutes left in the day) is, after `day_cap`, a scheduled check and the holiday step, a time window: log
+   decision `time`, no Twelve Data request, fired as a trigger. Beyond L_d nothing else fires.
 4. One log entry per check in KV (`log/<model_day>`): `{check_utc, model_day, decision, fired, http, tries, utc}`.
    `GET /log?day=YYYY-MM-DD` returns a model day's entries; it is the only route (no `/status`) and holds no secret.
 

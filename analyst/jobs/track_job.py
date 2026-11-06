@@ -1,6 +1,7 @@
 """analyst-track entry point (workflow .github/workflows/analyst-track.yml, dispatched by analyst-merge with a
 call_id). Display only. Each update commits site/track/<call_id>.json and dispatches analyst-deploy; this job never
-holds the Cloudflare token."""
+holds the Cloudflare token. §16.18 A17-R12: a trade whose time window ended `review_extend` is tracked to day_end(d)
+(analyst-merge dispatches it again with the time window's terminal)."""
 import os
 import re
 import subprocess
@@ -32,6 +33,11 @@ def main():
         print("not a buy/sell live call")
         return 0
     L = int((paths.read_params(view) or {}).get("L_min", 50))
+    w = clock.window_of(cid)
+    xid = clock.call_id(w.day, clock.time_tag(w.exit_utc - clock.HALF))     # its time window (§16.18 A17-R12)
+    xt = view.read_json(paths.terminal_path("live", xid)) if paths.a17_applies(paths.read_mode(view), w.day) else None
+    if xt and xt.get("status") == "review_extend":
+        call = dict(call, exit_utc=rec.iso(clock.day_end(w.day)))
     api = ghapi.GitHubAPI(os.environ["GITHUB_REPOSITORY"])
     out = _boot.ROOT / "site" / "track" / f"{cid}.json"
 

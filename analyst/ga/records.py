@@ -13,6 +13,11 @@ or a `no_call:*`; side, the multiples, S, T, S_dimes and T_dimes are set for eve
 plan.side_of from the context's `review`) and are as for stay_out otherwise. A call is not valid when its status does
 not follow from its plan by that mapping, or when it has a review status or action without an `analyst-context/5`
 context; the merge does not recompute the open set (the judge does).
+
+§16.18 A17 (A17-R4, A17-R6, A17-R8): a time window's attempt has `wake` {kind time, reason = the call_id of its
+subject (a trade window of the same model day), check_utc, td null}; status `review_extend` follows from plan action
+`extend`; a review status or action is valid with `analyst-context/5` or `/6`, `extend`/`review_extend` only with `/6`
+whose `review.kind` is `time`; a time window's call has status `review_extend`, `review_close` or `no_call:*`.
 """
 import os
 import shutil
@@ -30,10 +35,13 @@ CALL_SCHEMA = "analyst-call/1"
 LESSON_SCHEMA = "analyst-lesson/1"
 NOTE = "self-reported, unverified"
 CALL_STATUSES = ("called", "stay_out", "no_call:data", "no_call:d_ref", "no_call:invalid", "no_call:refusal",
-                 "review_hold", "review_close")
+                 "review_hold", "review_close", "review_extend")
 REVIEW_CONTEXT = "analyst-context/5"
+REVIEW_CONTEXTS = (REVIEW_CONTEXT, "analyst-context/6")         # §16.18 A17
+TIME_CONTEXT = "analyst-context/6"
 PLAN_ACTIONS = {"called": ("buy", "sell", "reverse", "add"), "stay_out": ("stay_out",), "review_hold": ("hold",),
-                "review_close": ("close",)}
+                "review_close": ("close",), "review_extend": ("extend",)}
+TIME_STATUSES = ("review_extend", "review_close")              # a time window's decisions (§16.18 A17-R8)
 SESSION_ENV = ("CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID", "SESSION_ID")
 MODEL_ENV = ("CLAUDE_CODE_MODEL", "ANTHROPIC_MODEL", "CLAUDE_MODEL")
 
@@ -116,7 +124,7 @@ def call(ctx, ctx_sha, attempt_n, status, plan_obj, plan_sha, failures, playbook
         s_d, t_d, s, t = plan.s_and_t(cents, plan_obj["stop_mult"], plan_obj["target_mult"])
         out.update(side=plan.side_of(plan_obj["action"], ctx.get("review")), stop_mult=plan_obj["stop_mult"],
                    target_mult=plan_obj["target_mult"], S=s, T=t, S_dimes=s_d, T_dimes=t_d)
-    elif status in ("stay_out", "review_hold", "review_close"):
+    elif status in ("stay_out", "review_hold", "review_close", "review_extend"):
         out["side"] = 0
     if canary_probe is not None:
         out["canary_probe"] = canary_probe
@@ -139,6 +147,12 @@ def valid_wake(wake, call_id):
         return False
     if wake["kind"] != w.kind or wake["check_utc"] != rec.iso(w.check_utc):
         return False
+    if w.kind == "time":                       # §16.18 A17-R4: the subject's call_id, no request
+        try:
+            sd, stag = clock.parse_call_id(wake["reason"] if isinstance(wake["reason"], str) else "")
+        except ValueError:
+            return False
+        return sd == w.day and stag[0] != "X" and wake["td"] is None
     if w.kind != "trigger":
         return wake["reason"] is None and wake["td"] is None
     td_ = wake["td"]
@@ -184,9 +198,19 @@ def valid_call(doc):
         if doc["plan"].get("action") not in PLAN_ACTIONS[doc["status"]]:
             return False
     action = doc["plan"].get("action") if isinstance(doc["plan"], dict) else None
-    if (doc["status"] in ("review_hold", "review_close") or action in ("hold", "close", "reverse", "add")) \
-            and ctx.get("schema") != REVIEW_CONTEXT:
+    if (doc["status"] in ("review_hold", "review_close", "review_extend")
+            or action in ("hold", "close", "reverse", "add", "extend")) and ctx.get("schema") not in REVIEW_CONTEXTS:
         return False
+    rv = ctx.get("review") if isinstance(ctx.get("review"), dict) else {}
+    if (doc["status"] == "review_extend" or action == "extend") and \
+            (ctx.get("schema") != TIME_CONTEXT or rv.get("kind") != "time"):
+        return False                                     # §16.18 A17-R6
+    try:
+        is_time = clock.window_of(doc["call_id"]).kind == "time"
+    except ValueError:
+        return False
+    if is_time and not (doc["status"] in TIME_STATUSES or doc["status"].startswith("no_call:")):
+        return False                                     # §16.18 A17-R8
     if doc["status"] in ("no_call:data", "no_call:d_ref") and ctx.get("status") != doc["status"]:
         return False
     return True

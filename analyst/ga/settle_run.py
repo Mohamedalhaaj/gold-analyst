@@ -22,7 +22,12 @@ trades their weights and clusters (R-AN-94) before anything is written; then eve
 reverse, add) gets an `analyst-settled/2` record and every terminal window except `skipped:*` a twin. Canary windows
 of model days >= a15_from are settled the same way under analyst/canary/ (class `canary`), in the canary's own window
 order; earlier canary windows are never settled. The modes never hold each other back; the state and the ledger are
-live only."""
+live only.
+
+§16.18 A17 (A17-R9): for model days d >= a17_from the open sets carry extensions (review.open_state); a trade extended
+by its time window settles over [t0, day_end(d)), with a later closing window's managed exit; every trade's record is
+`analyst-settled/3` with its `time` block (its time window, if any, and at_4h / to_day_end); time windows get no
+settled record and no twin, and the day's settlement does not wait for their nominal exits."""
 import datetime as dt
 import json
 import urllib.request
@@ -117,8 +122,8 @@ def settle_day(ws, mode, day, rbk, now, run_id, head_sha, log=lambda s: None):
     terms = {w.call_id: view.read_json(paths.terminal_path(mode, w.call_id)) for w in day}
     if any(t is None for t in terms.values()) or now < day_end(d):
         return False
-    called = [w for w in day if terms[w.call_id]["status"] == "called"]
-    twins = [w for w in day if not terms[w.call_id]["status"].startswith("skipped:")]
+    called = [w for w in day if terms[w.call_id]["status"] == "called" and w.kind != "time"]
+    twins = [w for w in day if not terms[w.call_id]["status"].startswith("skipped:") and w.kind != "time"]
     if all(view.exists(paths.settled_path(w.call_id, mode)) for w in called) and \
             all(view.exists(paths.twin_path(w.call_id, mode)) for w in twins):
         return True
@@ -126,19 +131,22 @@ def settle_day(ws, mode, day, rbk, now, run_id, head_sha, log=lambda s: None):
         if not view.exists(paths.call_path(mode, w.call_id)):
             log(f"call_file_missing {w.call_id}")
             return False
-    if not all(settle.processable(rbk, view, w, now) for w in day):
+    if not all(settle.processable(rbk, view, w, now) for w in day if w.kind != "time"):
         return False
     m, _used = store.load_days(view, rbk, settle.day_inputs(rbk, day[0])[0])
     calls = {w.call_id: view.read_json(paths.call_path(mode, w.call_id)) for w in day
              if view.exists(paths.call_path(mode, w.call_id))}
     entries = [review.entry_from_call(w.call_id, w, terms[w.call_id]["status"], calls.get(w.call_id)) for w in day]
-    o_sets, _eff, closed_by = review.open_sets(entries)
+    o_sets, _eff, closed_by, extended_by = review.open_state(entries)
     revs = review.reviews_of(entries, o_sets)
     by_id = {w.call_id: w for w in day}
+    a17 = paths.a17_applies(paths.read_mode(view), d)
+    x_exit = {w.call_id: clock.day_end(d) if w.call_id in extended_by else w.exit_utc for w in called}
     res = {}
     for w in called:
         c = closed_by.get(w.call_id)
-        res[w.call_id] = settle.outcomes(m, w, calls[w.call_id], rbk, by_id[c].entry_utc if c else None)
+        res[w.call_id] = settle.outcomes(m, settle.with_exit(w, x_exit[w.call_id]), calls[w.call_id], rbk,
+                                         by_id[c].entry_utc if c else None)
     wts = review.weights([(w.call_id, w.entry_utc, res[w.call_id]["x_end"]) for w in called])
     start = view.read_json(paths.START_PATH)
     if mode == "canary":
@@ -158,8 +166,15 @@ def settle_day(ws, mode, day, rbk, now, run_id, head_sha, log=lambda s: None):
                        "reason_ar": pl.get("reason_ar") if pl else None})
         extra = {"managed_utc": by_id[c].entry_utc if c else None, "closed_by": c, "weight": wts[w.call_id][0],
                  "cluster": wts[w.call_id][1], "reviews": rv, "res": res[w.call_id]}
+        tb = None
+        if a17:                                   # §16.18 A17-R9: the time block
+            xid = clock.call_id(d, clock.time_tag(w.exit_utc - clock.HALF))
+            if xid not in by_id:
+                xid = None
+            tb = settle.time_block(m, w, calls[w.call_id], rbk, xid, terms[xid]["status"] if xid else None,
+                                   w.call_id in extended_by, x_exit[w.call_id])
         doc = settle.settled_record(view, w, calls[w.call_id], terms[w.call_id], cls, m, rbk, now, run_id, head_sha,
-                                    mode=mode, a15=extra)
+                                    mode=mode, a15=extra, a17=tb)
         ws.write(paths.settled_path(w.call_id, mode), rec.record_bytes(doc))
     for w in twins:
         if not view.exists(paths.twin_path(w.call_id, mode)):
