@@ -65,6 +65,7 @@ OPERATIONAL_A13 = ("guard_not_enforced", "guard_config", "routine_project", "cc_
 OPERATIONAL_A14 = ("skipped_wrong", "a14_from")
 OPERATIONAL_A15 = ("review_open", "open_cap", "a15_from", "lesson_source")
 OPERATIONAL_A16 = ("a16_from",)             # the day cap's start day (§16.18 A16)
+OPERATIONAL_A17 = ("a17_from",)             # the time windows' start day (§16.18 A17-D6)
 LEDGER_COLS = ["call_id", "model_day", "window", "class", "terminal_status", "status", "detail", "action", "side",
                "stop_mult", "target_mult", "confidence", "D_ref", "S", "T", "lock_utc", "attempts", "entry_utc",
                "exit_utc", "P_e", "X", "Tg", "exit_minute_utc", "P_x", "reason", "fill", "gross_usd", "cost_usd",
@@ -198,7 +199,8 @@ def operational(key):
                                 or (parts[0] == "A13" and parts[1] in OPERATIONAL_A13)
                                 or (parts[0] == "A14" and parts[1] in OPERATIONAL_A14)
                                 or (parts[0] == "A15" and parts[1] in OPERATIONAL_A15)
-                                or (parts[0] == "A16" and parts[1] in OPERATIONAL_A16))
+                                or (parts[0] == "A16" and parts[1] in OPERATIONAL_A16)
+                                or (parts[0] == "A17" and parts[1] in OPERATIONAL_A17))
 
 
 def period_starts(mode_doc):

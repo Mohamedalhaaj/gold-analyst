@@ -34,6 +34,12 @@ and a context that stops at XAUUSD does not make it. In canary mode a context of
 `memory` built from the canary records (R-AN-95); `settled` and `pending` entries carry `side` after `action`. The
 `sources` note gains one sentence on the review prices.
 
+Since §16.18 A17 (`analyst-context/6`, every window of a model day >= a17_from, A17-R5): the `review` block is
+{kind, open, options, ref_px, ref_utc, extend_until_utc}: kind `review` for a review (open, options as for `/5`) or
+`time` for a time window (open = [its subject], options extend and close, extend_until_utc = day_end(d)); each open
+element has `extended` and its current exit (`review_info`, which the session read). A time window whose session
+found no subject ends `no_call:data` with detail `time_subject`, before any request.
+
 Detail codes: store_stale (more than 60 listed hours), store_mismatch (a raw file differs from its row), td_<reason>
 (the XAUUSD request not `ok` while a listed hour is required: td_key, td_plan, td_credits, td_server, td_invalid,
 td_other, td_budget), hour_absent (XAUUSD `ok` without a bar at a required listed hour), no_price (no P_ref at all),
@@ -49,6 +55,7 @@ from . import review as review_rule
 from . import wake as wake_rule
 
 SCHEMA = "analyst-context/5"
+SCHEMA_A17 = "analyst-context/6"                            # §16.18 A17-R5
 FORECASTS_PATH = "mirror/system/forecasts.csv"
 WAKE_NOTE = " wake values and wake.bars_m30 come from Twelve Data 30-minute bars in UTC, labelled by their start."
 REVIEW_NOTE = (" review prices come from Twelve Data 30-minute bars in UTC and are indicative; settlement uses "
@@ -97,13 +104,26 @@ def _by_time(values):
     return {v[0]: v for v in values}
 
 
-def build(view, head_sha, mode, w, asof, params, fetcher, with_memory=None, wake=None, review_open=None):
+def build(view, head_sha, mode, w, asof, params, fetcher, with_memory=None, wake=None, review_open=None,
+          review_info=None):
     """The context object for window `w` at `asof` (aware UTC, floored to the second); `fetcher` is a td.Fetcher;
     `wake` is the attempt record's `wake` (R-AN-90); `review_open` is O(R), the open trades' review.open_sets
-    entries, which the session read before this call (R-AN-92; None or empty: no review)."""
+    entries, which the session read before this call (R-AN-92; None or empty: no review). From a17_from (§16.18 A17)
+    `review_info` = {"kind": review | time | None, "cur": {call_id: (current exit, extended)}, "extend_until": day_end}
+    gives the `/6` block; for a time window `review_open` is [its subject] (empty: no subject)."""
     asof = rec.floor_s(asof)
     asof_s = rec.iso(asof)
     d = w.day
+    a17 = paths.a17_applies(paths.read_mode(view), d)
+    ri = review_info or {}
+
+    def rblock(bars):
+        if not review_open:
+            return None
+        if not a17:
+            return review_rule.block(review_open, w.entry_utc, bars)
+        return review_rule.block(review_open, w.entry_utc, bars, kind=ri.get("kind") or "review", cur=ri.get("cur"),
+                                 extend_until=ri.get("extend_until"))
     L = int(params["L_min"])
     holidays = tables.load_holidays(view)
     events = tables.load_events(view)
@@ -117,7 +137,7 @@ def build(view, head_sha, mode, w, asof, params, fetcher, with_memory=None, wake
     first_listed = max(complete, start_hist)
     listed = [h for h in clock.hours_between(first_listed, h_new) if trading_hour(h)] if first_listed <= h_new else []
     ctx = {
-        "schema": SCHEMA, "call_id": w.call_id, "mode": mode, "window": w.name, "model_day": d.isoformat(),
+        "schema": SCHEMA_A17 if a17 else SCHEMA, "call_id": w.call_id, "mode": mode, "window": w.name, "model_day": d.isoformat(),
         "entry_utc": rec.iso(w.entry_utc), "exit_utc": rec.iso(w.exit_utc), "deadline_utc": rec.iso(w.deadline_utc),
         "entry_server": rec.server_str(w.entry_server), "exit_server": rec.server_str(w.exit_server),
         "asof_utc": asof_s, "repo_head_sha": head_sha,
@@ -128,13 +148,16 @@ def build(view, head_sha, mode, w, asof, params, fetcher, with_memory=None, wake
         "fx": None, "risk": None, "us2y": "unknown", "fresh": None, "sources": dict(SOURCES),
         "events": events.context_block(d), "d_ref": None, "levels": None,
         "wake": wake_rule.context_block(wake) if wake else None,
-        "review": review_rule.block(review_open, w.entry_utc, []) if review_open else None, "memory": None,
+        "review": rblock([]), "memory": None,
         "status": "ok", "detail": None,
     }
 
     def fail(status, detail):
         ctx["status"], ctx["detail"] = status, detail
         return ctx
+
+    if w.kind == "time" and not review_open:              # §16.18 A17-R5: no subject, no decision
+        return fail("no_call:data", "time_subject")
 
     if len(listed) > MAX_LISTED_HOURS:
         return fail("no_call:data", "store_stale")
@@ -251,7 +274,7 @@ def build(view, head_sha, mode, w, asof, params, fetcher, with_memory=None, wake
         ctx["files"].append(prov)
         bars = review_rule.used_bars(values, a, asof) if prov["status"] == "ok" else []
         prov["bars"] = [td.bar_obj(v) for v in bars]
-        ctx["review"] = review_rule.block(review_open, w.entry_utc, bars)
+        ctx["review"] = rblock(bars)
 
     # D_ref (R-AN-21)
     block, detail = dref.compute(slots_b.decode("utf-8"), w.slot, d, asof_s, p_ref)

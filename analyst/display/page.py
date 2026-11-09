@@ -30,10 +30,13 @@ STATUS_AR = {"no_call:data": "لا خطة: بيانات ناقصة", "no_call:d_
              "no_call:late": "لا خطة: قُفلت متأخرة", "no_call:run": "لا خطة: لم يكتمل التشغيل",
              "no_call:model": "لا خطة: نموذج آخر", "missed:trigger": "فاتت: لم يبدأ التشغيل",
              "missed:push": "فاتت: تعذّر الإرسال", "skipped:holiday": "عطلة",
-             "skipped:trade_open": "صفقة سابقة ما زالت مفتوحة", "skipped:day_cap": "بلغ الحد اليومي للقرارات"}
+             "skipped:trade_open": "صفقة سابقة ما زالت مفتوحة", "skipped:day_cap": "بلغ الحد اليومي للقرارات",
+             "review_hold": "مراجعة: أبقى الصفقة المفتوحة", "review_close": "أغلق الصفقة المفتوحة",
+             "review_extend": "قرار نهاية الوقت: مُدِّدت الصفقة حتى نهاية يوم التداول"}       # §16.18 A15, A17
 CLOCK_LABEL = {"server": "توقيت المنصة", "tripoli": "طرابلس", "W1": "لندن", "W2": "نيويورك", "W1b": "لندن",
-               "W2b": "نيويورك", "T": "UTC"}
-WINDOW_AR = {"W1": "لندن", "W2": "نيويورك", "W1b": "لندن، نظرة ثانية", "W2b": "نيويورك، نظرة ثانية"}
+               "W2b": "نيويورك", "T": "UTC", "X": "UTC"}
+WINDOW_AR = {"W1": "لندن", "W2": "نيويورك", "W1b": "لندن، نظرة ثانية", "W2b": "نيويورك، نظرة ثانية",
+             "X": "قرار نهاية الوقت"}                                                      # §16.18 A17
 CARDS = 8
 
 
@@ -102,12 +105,14 @@ def track_block(tr, now, L_min, exit_utc):
     return "".join(out)
 
 
-def card(view, t, call, st, ledger_rows, track, pins, now, L_min):
+def card(view, t, call, st, ledger_rows, track, pins, now, L_min, ext_exit=None):
+    """One live window's card; `ext_exit` is day_end(d) for a trade its time window extended (§16.18 A17-R12)."""
     w = clock.window_of(t["call_id"])
     status = t["status"]
+    exit_utc = ext_exit or w.exit_utc
     label = WINDOW_AR.get(w.name) or f"إشارة سعرية {w.check_utc.strftime('%H:%M')} UTC"
     head = f'<h2>{esc(w.day.isoformat())} · {esc(label)}</h2>'
-    parts = [f'<article class="card" data-entry="{rec.epoch_ms(w.entry_utc)}" data-exit="{rec.epoch_ms(w.exit_utc)}">',
+    parts = [f'<article class="card" data-entry="{rec.epoch_ms(w.entry_utc)}" data-exit="{rec.epoch_ms(exit_utc)}">',
              head]
     if status in ("called", "stay_out"):
         p = call["plan"]
@@ -115,7 +120,9 @@ def card(view, t, call, st, ledger_rows, track, pins, now, L_min):
     else:
         parts.append(f'<p class="plan">لا خطة الآن</p><p class="note">{esc(STATUS_AR.get(status, status))}</p>')
     parts.append(_clock_rows("الدخول", w.entry_utc, w.name))
-    parts.append(_clock_rows("الخروج الإجباري", w.exit_utc, w.name))
+    parts.append(_clock_rows("الخروج الإجباري", exit_utc, w.name))
+    if ext_exit:
+        parts.append('<p class="note">مُدِّدت في قرار نهاية الوقت حتى نهاية يوم التداول</p>')
     if status == "called":
         p = call["plan"]
         s = call["side"]
@@ -132,7 +139,7 @@ def card(view, t, call, st, ledger_rows, track, pins, now, L_min):
                      f'<div class="row"><span class="k">الوقف SL</span><span class="num sl">—</span></div>'
                      f'<div class="row"><span class="k">الهدف TP</span><span class="num tp">—</span></div></div>')
         parts.append('<p class="warn">إن لم تستطع الإغلاق عند وقت الخروج فلا تفتح الصفقة</p>')
-        parts.append(track_block(track, now, L_min, w.exit_utc))
+        parts.append(track_block(track, now, L_min, exit_utc))
     if status in ("called", "stay_out"):
         p = call["plan"]
         parts.append(f'<div class="reason"><span class="k">تعليل النموذج، غير مثبت</span>'
@@ -176,10 +183,18 @@ def build(view, now, track_dir=None):
             if t:
                 terms.append(t)
         terms.sort(key=lambda t: clock.window_key(t["call_id"]), reverse=True)
+        ext = {}                                       # §16.18 A17-R12: the trades extended by their time window
+        for t in terms:
+            if t.get("status") == "review_extend":
+                xc = view.read_json(paths.call_path("live", t["call_id"])) or {}
+                op = ((xc.get("context") or {}).get("review") or {}).get("open") or []
+                if op and isinstance(op[0], dict) and op[0].get("call_id"):
+                    ext[op[0]["call_id"]] = clock.day_end(clock.window_of(t["call_id"]).day)
         for t in terms[:CARDS]:
             call = view.read_json(paths.call_path("live", t["call_id"])) if t.get("call") else None
             tr = view.read_json(f"site/track/{t['call_id']}.json")
-            cards.append(card(view, t, call, st, ledger_rows, tr, pins, now, int(params["L_min"])))
+            cards.append(card(view, t, call, st, ledger_rows, tr, pins, now, int(params["L_min"]),
+                              ext.get(t["call_id"])))
     body = "".join(cards) if cards else '<article class="card"><p class="plan">لا خطة الآن</p></article>'
     canary = ('<p class="note">المحلل في مرحلة تجربة تمهيدية؛ خطط هذه المرحلة لا تُعرض ولا تُحسب.</p>'
               if mode_doc["mode"] == "canary" else "")

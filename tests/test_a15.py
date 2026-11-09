@@ -115,10 +115,10 @@ def test_plan_3_keys_and_the_older_schema():
     assert plan.plan3_applies("analyst-context/5") and not plan.plan3_applies("analyst-context/4")
     assert plan.stay_reason_applies("analyst-context/5")
     doc = json.loads((Path(__file__).resolve().parents[1] / paths.SCHEMA_PATH).read_text("utf-8"))
-    assert doc["$id"] == "analyst-plan/3"
+    assert doc["$id"] == "analyst-plan/4"                    # §16.18 A17: /3 plus extend
     trade, stay, rv = doc["oneOf"]
     assert trade["properties"]["action"]["enum"] == ["buy", "sell", "reverse", "add"]
-    assert rv["properties"]["action"]["enum"] == ["hold", "close"] and set(rv["required"]) == plan.STAY_KEYS
+    assert rv["properties"]["action"]["enum"] == ["hold", "close", "extend"] and set(rv["required"]) == plan.STAY_KEYS
 
 
 def ctx5(review_block, cents=2000):
@@ -154,7 +154,7 @@ def test_call_sides_statuses_and_validity():
     bad = dict(a, side=1)
     assert not plan.derivable(bad)
     assert plan.STATUS_OF == {"buy": "called", "sell": "called", "reverse": "called", "add": "called",
-                              "stay_out": "stay_out", "hold": "review_hold", "close": "review_close"}
+                              "stay_out": "stay_out", "hold": "review_hold", "close": "review_close", "extend": "review_extend"}
 
 
 # ---------------------------------------------------------------- managed exits (R-AN-93)

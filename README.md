@@ -126,6 +126,19 @@ advice and it never trades. Nobody has shown that the analyst has an edge; the e
   (`paths.day_cap`, `wake.DAY_CAP_A16`); every other rule, prompt, request and record is unchanged. The canary's
   10-trading-day count does not restart on a16_from: it runs on from a15_from (the client's decision of 2026-11-06,
   since only the cap changes).
+- The time decision (§16.18 A17), for model days on or after MODE.json `a17_from`. A trade that reaches its 4-hour
+  exit with at least 60 minutes of the trading day left gets a time window `<day>_X<hhmm>` that enters at that exit
+  (check 30 minutes before, deadline 15 minutes before; `G_X(d)` runs the grid to day_end − 90 min). The analyst
+  answers `extend` (`review_extend`: the trade stays open until day_end(d), 17:00 New York, with the same stop and
+  target; later reviews can still close or reverse it) or `close`; no decision means close. A scheduled window
+  entering at the exit wins; a time window beats a trigger at the same check and counts in the cap. Contexts are
+  `analyst-context/6` (the `review` block's `kind`, `extend_until_utc` and `open[].extended`), plans
+  `analyst-plan/4`, and settled records `analyst-settled/3` with a `time` block: the time window, whether it extended
+  the trade, x_exit, and the descriptive outcomes `at_4h` and `to_day_end` of every trade that could be extended.
+  Time windows settle nothing and have no twin. `ga/review.py` (open_state, time_subject), `ga/wake.py` (step 4b),
+  `ga/session.py` (`start`'s time window, `refused not_due`), `ga/settle_run.py` and `prompts/system.md` ("Time
+  decisions") carry it; the watcher fires time windows (log decision `time`). The canary's count does not restart,
+  but it does not end before 5 trading days from a17_from with at least 5 time decisions.
 
 ## Layout
 - `analyst/ga/`: the frozen code (session scripts, probes, context, D_ref, merge, settlement, state). The session uses

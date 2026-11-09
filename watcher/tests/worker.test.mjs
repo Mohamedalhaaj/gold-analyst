@@ -37,7 +37,9 @@ test("acts only on checks of G(d) for model weekdays >= a14_from", async () => {
   for (const t of ["2026-11-04T18:00:00Z", "2026-11-07T12:00:00Z", "2026-11-08T22:00:00Z", "2026-11-06T22:30:00Z"]) {
     assert.equal(await check(w, t), null, t);
   }
-  assert.equal(w.requests.length, 0, "no read outside G(d)");
+  // §16.18 A17: 18:00 is beyond L_d but in G_X(d), so MODE.json and STATE.json are read; without a17_from nothing more
+  assert.equal(w.requests.length, 2, "no other read outside G(d)");
+  assert.equal(w.kv.map.size, 0, "nothing logged outside G(d) without a17_from");
   const sunday = await check(w, "2026-11-08T22:30:00Z"); // Monday 2026-11-09's first check, at the Sunday open
   assert.equal(sunday.model_day, "2026-11-09");
   assert.equal(sunday.check_utc, "2026-11-08T22:30:00Z");
@@ -278,4 +280,106 @@ test("GET /log?day= returns the day's entries and nothing secret; every other ro
     assert.ok(!body.includes(s));
     assert.ok(![...world.kv.map.values()].join("").includes(s));
   }
+});
+
+// §16.18 A17 (A17-R3, A17-R10): the time step. D is 2026-11-04 (EST): L_d 17:30, day_end 22:00, G_X(d) to 20:30.
+function trigger(t) {
+  return W.triggerWindow(D, at(t));
+}
+
+function called(world, w, action = "buy", extra = {}) {
+  world.setMain(`${P}attempts/${w.call_id}_1.json`, { call_id: w.call_id, wake: { kind: w.kind, reason: null } });
+  world.setMain(`${P}calls/${w.call_id}.json`, { call_id: w.call_id, status: "called", plan: { action }, ...extra });
+}
+
+async function seedLog(world, entries) {
+  await world.kv.put(`log/${D}`, JSON.stringify(entries.map(([t, decision]) => ({ check_utc: t, model_day: D,
+    decision, fired: true, http: 200, tries: 1, utc: t }))));
+}
+
+test("A17: a called trade whose exit is T + 30 min gives the time window, fired with no Twelve Data request", async () => {
+  const mk = async (a17_from = D) => {
+    const world = new World({ bars: BARS, a15_from: "2026-11-02", a16_from: "2026-11-02" });
+    world.mainFiles.get("analyst/MODE.json").a17_from = a17_from;
+    await seedLog(world, [["2026-11-04T11:00:00Z", "trigger:asia_up"]]);
+    called(world, trigger("2026-11-04T11:00:00Z")); // 11:30 - 15:30
+    return world;
+  };
+  const world = await mk();
+  const e = await check(world, `${D}T15:00:00Z`);
+  assert.deepEqual([e.decision, e.fired], ["time", true]);
+  assert.equal(world.tdRequests().length, 0);
+  assert.equal(world.fires.length, 1);
+  // the day before a17_from keeps the A16 rule (a trigger candidate, so Twelve Data is asked)
+  const before = await mk("2026-11-05");
+  const b = await check(before, `${D}T15:00:00Z`);
+  assert.notEqual(b.decision, "time");
+  assert.equal(before.tdRequests().length, 1);
+  // a later check sees the fired time window among its wakes (E) once its attempt is readable
+  const later = await mk();
+  await seedLog(later, [["2026-11-04T11:00:00Z", "trigger:asia_up"], ["2026-11-04T15:00:00Z", "time"]]);
+  later.setMain(`${P}attempts/${D}_X1500_1.json`, { call_id: `${D}_X1500`, wake: { kind: "time", reason: null } });
+  const l = await check(later, `${D}T15:30:00Z`);
+  assert.equal(l.decision, "none"); // g = 30 min after the time window: no trigger, and no subject
+  assert.ok(later.requests.some((r) => r.url.endsWith(`attempts/${D}_X1500_1.json`)));
+});
+
+test("A17: no time window after a close or a reverse, beyond day_end − 60 min, on a holiday row or at a scheduled check", async () => {
+  const base = async () => {
+    const world = new World({ bars: BARS, a15_from: "2026-11-02", a16_from: "2026-11-02" });
+    world.mainFiles.get("analyst/MODE.json").a17_from = D;
+    return world;
+  };
+  // W2 (14:30) closes the trigger's trade: at 15:00 there is no subject
+  const closedW = await base();
+  await seedLog(closedW, [["2026-11-04T11:00:00Z", "trigger:asia_up"]]);
+  called(closedW, trigger("2026-11-04T11:00:00Z"));
+  onMain(closedW, win("W2"), "review_close", { terminal: true });
+  assert.notEqual((await check(closedW, `${D}T15:00:00Z`)).decision, "time");
+  const rev = await base();
+  await seedLog(rev, [["2026-11-04T11:00:00Z", "trigger:asia_up"]]);
+  called(rev, trigger("2026-11-04T11:00:00Z"));
+  called(rev, win("W2"), "reverse");
+  assert.notEqual((await check(rev, `${D}T15:00:00Z`)).decision, "time");
+  const hold = await base();
+  await seedLog(hold, [["2026-11-04T11:00:00Z", "trigger:asia_up"]]);
+  called(hold, trigger("2026-11-04T11:00:00Z"));
+  onMain(hold, win("W2"), "review_hold", { terminal: true });
+  assert.equal((await check(hold, `${D}T15:00:00Z`)).decision, "time");
+  // a trade exiting at 21:30 has less than 60 minutes left: no time window at 21:00 (also beyond G_X(d))
+  const late = await base();
+  await seedLog(late, [["2026-11-04T17:00:00Z", "trigger:asia_up"]]);
+  called(late, trigger("2026-11-04T17:00:00Z")); // 17:30 - 21:30
+  assert.equal(await check(late, `${D}T21:00:00Z`), null);
+  // the last time window: a trade exiting at 21:00 (check 20:30, beyond L_d but in G_X(d))
+  const last = await base();
+  await seedLog(last, [["2026-11-04T16:30:00Z", "trigger:asia_up"]]);
+  called(last, trigger("2026-11-04T16:30:00Z")); // 17:00 - 21:00
+  const x = await check(last, `${D}T20:30:00Z`);
+  assert.deepEqual([x.decision, x.fired], ["time", true]);
+  assert.equal((await check(last, `${D}T19:30:00Z`)).decision, "none", "beyond L_d without a subject: none");
+  // W1 (08:00 - 12:00) on main: its exit check 11:30 is not a scheduled check, so it gives X1130
+  const w1 = await base();
+  onMain(w1, win("W1"), "called", { terminal: true });
+  assert.equal((await check(w1, `${D}T11:30:00Z`)).decision, "time");
+  // a scheduled window entering at the exit wins (A17-D4): T1000's trade (10:30 - 14:30) exits at W2's entry, and
+  // the 14:00 check is W2's, fired by its own routine as a fresh decision
+  const sched = await base();
+  await seedLog(sched, [["2026-11-04T10:00:00Z", "trigger:asia_up"]]);
+  called(sched, trigger("2026-11-04T10:00:00Z"));
+  const s = await check(sched, `${D}T14:00:00Z`);
+  assert.deepEqual([s.decision, s.fired], ["fixed", false]);
+});
+
+test("A17: the day cap binds a time window; MODE.json without a17_from reads no call file on an A15 day", async () => {
+  const world = new World({ bars: BARS, a15_from: "2026-11-02", a16_from: "2026-11-02" });
+  world.mainFiles.get("analyst/MODE.json").a17_from = D;
+  const ten = ["2026-11-03T22:30:00Z", "2026-11-04T00:00:00Z", "2026-11-04T01:30:00Z", "2026-11-04T03:00:00Z",
+    "2026-11-04T04:30:00Z", "2026-11-04T06:00:00Z", "2026-11-04T07:00:00Z", "2026-11-04T08:00:00Z",
+    "2026-11-04T09:00:00Z", "2026-11-04T11:00:00Z"];
+  await seedLog(world, ten.map((t) => [t, "trigger:y_low"]));
+  for (const t of ten.slice(0, 9)) onMain(world, trigger(t), "stay_out", { terminal: true, reason: "y_low" });
+  called(world, trigger("2026-11-04T11:00:00Z"));
+  const e = await check(world, `${D}T15:00:00Z`);
+  assert.deepEqual([e.decision, e.fired], ["day_cap", false]);
 });

@@ -61,6 +61,12 @@ add) and not to these two. A call whose status does not follow from its plan, or
 without an `analyst-context/5` context, is `invalid_content` (records.valid_call); the merge does not recompute the
 open set. For model days >= a15_from the closer never writes `skipped:trade_open`. A canary lesson is accepted with a
 canary settled record (analyst/canary/settled/) as well as for the fixture.
+
+§16.18 A17 (A17-R8): call_ids also name time windows X<hhmm>, valid only from MODE.json a17_from with a check in
+G_X(d) that is not a scheduled check (else `invalid_content`); a time window is expected only with an accepted
+attempt witness and is ordered and closed as a trigger window (`window_order`, `no_call:run`, never skipped:* or
+missed:trigger); `review_extend` comes from the call itself and skips step 4 (derivable); a live `review_extend`
+dispatches analyst-track for its subject, whose tracking then runs to day_end(d).
 """
 import datetime as dt
 import re
@@ -78,7 +84,7 @@ REVISION_SCHEMA = "analyst-revision/1"
 ZERO40 = "0" * 40
 BOT = "github-actions[bot]"
 GRACE = dt.timedelta(minutes=20)
-CID = r"[0-9]{4}-[0-9]{2}-[0-9]{2}_(?:W[12]b?|T(?:[01][0-9]|2[0-3])(?:00|30))"
+CID = r"[0-9]{4}-[0-9]{2}-[0-9]{2}_(?:W[12]b?|[TX](?:[01][0-9]|2[0-3])(?:00|30))"      # X: §16.18 A17
 HEADER_RE = re.compile(r"^analyst-witness/1 (\S+) (\S+) seq ([0-9]+)$")
 ANALYST_REF = "refs/heads/claude/analyst-"
 SHA_RE = re.compile(r"[0-9a-f]{40}")
@@ -99,7 +105,8 @@ NO_AUTH = ("-c", "http.https://github.com/.extraheader=")   # drops the token ac
 PROTO_V2 = ("-c", "protocol.version=2")   # the server then lists only the ref asked for: no branch flood in the answer
 TERMINAL_STATUSES = ("called", "stay_out", "no_call:refusal", "no_call:invalid", "no_call:data", "no_call:d_ref",
                      "no_call:late", "no_call:run", "missed:trigger", "missed:push", "skipped:holiday",
-                     "skipped:trade_open", "skipped:day_cap", "review_hold", "review_close")
+                     "skipped:trade_open", "skipped:day_cap", "review_hold", "review_close", "review_extend")
+WAKE_KINDS = ("trigger", "time")       # windows that exist only with an accepted attempt witness (A14, §16.18 A17)
 
 
 class InboxUnavailable(Exception):
@@ -160,7 +167,7 @@ def names_a_window(ident):
 
 def trigger_windows(mode_doc, mode, view):
     """{model_day: {call_id: Window}} of the trigger windows of `mode` with an accepted attempt witness, for model
-    days >= a14_from (R-AN-11)."""
+    days >= a14_from (R-AN-11), and of its time windows with one, for model days >= a17_from (§16.18 A17-R8)."""
     out = {}
     if view is None or paths.a14_from(mode_doc) is None:
         return out
@@ -171,7 +178,8 @@ def trigger_windows(mode_doc, mode, view):
             w = clock.window_of(x.get("id") or "")
         except ValueError:
             continue
-        if w.kind == "trigger" and paths.a14_applies(mode_doc, w.day):
+        if (w.kind == "trigger" and paths.a14_applies(mode_doc, w.day)) or \
+                (w.kind == "time" and paths.a17_applies(mode_doc, w.day)):
             out.setdefault(w.day, {})[w.call_id] = w
     return out
 
@@ -198,6 +206,8 @@ def a14_window_ok(mode_doc, w):
         return True
     if not paths.a14_applies(mode_doc, w.day):
         return False
+    if w.kind == "time":                       # §16.18 A17-R8
+        return paths.a17_applies(mode_doc, w.day) and clock.valid_time(w.day, w.tag)
     return w.kind != "trigger" or clock.valid_trigger(w.day, w.tag)
 
 
@@ -764,7 +774,7 @@ class Merge:
         the open trade's call_id) when an earlier window of its day has terminal `called` and an exit_utc later
         than w's entry_utc; else (`skipped:day_cap`, the count) when 6 (10 from a16_from on, §16.18 A16) or more
         earlier windows of its day have an accepted attempt; else None."""
-        if w.kind == "trigger":
+        if w.kind in WAKE_KINDS:
             return None
         earlier = self.earlier_of_day(mode, w)
         for x in ([] if paths.a15_applies(self.mode_doc, w.day) else earlier):   # no trade_open from a15_from
@@ -983,7 +993,7 @@ class Merge:
                 return self.reject(mode, "attempt", draw, "invalid_content", path, push)
             if not self._in_period(mode, w.day):
                 return self.reject(mode, "attempt", draw, "mode", path, push)
-            if w.kind == "trigger" and not acc and self.later_closed(mode, w):
+            if w.kind in WAKE_KINDS and not acc and self.later_closed(mode, w):
                 return self.reject(mode, "attempt", draw, "window_order", path, push)
             window = {"entry_utc": rec.iso(w.entry_utc), "deadline_utc": rec.iso(w.deadline_utc),
                       "time_utc": t_utc, "time_source": t_src,
@@ -1012,7 +1022,7 @@ class Merge:
             return self.reject(mode, "call", cid, "invalid_content", path, push)
         if not self._in_period(mode, w.day):
             return self.reject(mode, "call", cid, "mode", path, push)
-        if w.kind == "trigger" and not witness.accepted_attempts(self.view, mode, cid) \
+        if w.kind in WAKE_KINDS and not witness.accepted_attempts(self.view, mode, cid) \
                 and self.later_closed(mode, w):
             return self.reject(mode, "call", cid, "window_order", path, push)
         window = {"entry_utc": rec.iso(w.entry_utc), "deadline_utc": rec.iso(w.deadline_utc), "time_utc": t_utc,
@@ -1045,13 +1055,17 @@ class Merge:
             status, detail = "no_call:invalid", "no_attempt"
         elif att[0]["void"]:
             status, detail = "no_call:invalid", "void_attempt"
-        elif doc["status"] not in ("review_hold", "review_close") and not _derivable(doc):   # step 4 (§16.18 A15)
+        elif doc["status"] not in ("review_hold", "review_close", "review_extend") and not _derivable(doc):  # step 4
             status, detail = "no_call:invalid", "underivable"
         else:
             status, detail = doc["status"], doc.get("detail")
         info = {"path": path, "sha256": sha, "plan_status": doc["status"], "lock_utc": t_utc, "time_source": t_src,
                 "push_sha": (push or {}).get("after"), "witness_seq": witness_seq}
         self.write_terminal(mode, w, status, detail, "merge", call_info=info, push=push)
+        if mode == "live" and status == "review_extend":       # §16.18 A17-R12: the subject's tracking runs on
+            op = ((doc.get("context") or {}).get("review") or {}).get("open") or []
+            if op and isinstance(op[0], dict) and op[0].get("call_id"):
+                self.tracks.append(op[0]["call_id"])
 
     def _settled_exists(self, mode, cid):
         if mode == "canary":

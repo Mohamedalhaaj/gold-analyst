@@ -146,3 +146,22 @@ def test_status_csv_only_after_promotion():
     assert lines[0] == "key,value" and "e_n,412.3456" in lines and "today_action,buy" in lines
     assert "today_stop_usd,35.20" in lines and lines[-1] == f"end,{len(lines) - 1}" and text.endswith("\n")
     text.encode("ascii")
+
+
+def test_an_extended_live_trade_shows_its_new_exit():
+    """§16.18 A17-R12: the time window's card says the trade was extended, and the trade's card shows the end of the
+    trading day as its forced exit (17:00 New York = 22:00 UTC on 2026-11-10)."""
+    cid, xid = "2026-11-10_T1100", "2026-11-10_X1500"
+    xw = clock.window_of(xid)
+    xterm = {"call_id": xid, "status": "review_extend", "entry_utc": rec.iso(xw.entry_utc),
+             "call": {"sha256": "cd" * 32, "lock_utc": rec.iso(xw.deadline_utc), "witness_seq": 3}}
+    xcall = {"plan": {"action": "extend", "confidence": "low", "reason_ar": "تمديد", "key_risks_ar": ""}, "side": 0,
+             "context": {"review": {"kind": "time", "open": [{"call_id": cid}]}}}
+    view = live_view(cid, extra={f"analyst/terminal/{xid}.json": json.dumps(xterm),
+                                 f"analyst/calls/{xid}.json": json.dumps(xcall)})
+    doc = page.build(view, dt.datetime(2026, 11, 10, 15, 40, tzinfo=UTC))
+    assert "قرار نهاية الوقت: مُدِّدت الصفقة حتى نهاية يوم التداول" in doc and "قرار نهاية الوقت</h2>" in doc
+    assert "مُدِّدت في قرار نهاية الوقت حتى نهاية يوم التداول" in doc
+    assert f'data-exit="{rec.epoch_ms(clock.day_end(dt.date(2026, 11, 10)))}"' in doc
+    plain = page.build(live_view(cid), dt.datetime(2026, 11, 10, 15, 40, tzinfo=UTC))
+    assert f'data-exit="{rec.epoch_ms(clock.window_of(cid).exit_utc)}"' in plain and "مُدِّدت" not in plain

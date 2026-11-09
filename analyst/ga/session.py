@@ -28,6 +28,14 @@ for an `analyst-context/5` context and refuses an action outside the context's o
 validation failure counted toward the cap of 3); hold and close lock as `review_hold` and `review_close`. In canary
 mode, in a run on or after a15_from 00:00:00Z, `lesson-start` takes the pending canary settled records instead of the
 fixture, and the canary revision reads the canary records; the canary playbook in force follows R-AN-50's A15 rule.
+
+§16.18 A17 (A17-R4, A17-R5): for model days >= MODE.json a17_from the candidate of a check T in G_X(d) that is not a
+scheduled check is a time window `<d>_X<hhmm>` when the day's files give a subject (review.time_subject: the trade
+whose exit is T + 30 min, not closed, exit <= day_end(d) − 60 min) and d has no holiday-table row: `start` gates it
+by day_cap only, makes no XAUUSD_M30 request and writes `wake` {kind time, reason = the subject's call_id}; without a
+subject a T in G(d) stays a trigger candidate and a T beyond L_d is refused `not_due`. `context` passes the `/6`
+review block's kind, the trades' current exits and, for a time window, its subject (recomputed from the same files);
+`lock` validates `analyst-plan/4`.
 """
 import datetime as dt
 import json
@@ -205,10 +213,27 @@ class Session:
                     return w
         T = clock.floor_half_hour(now)
         d = clock.tday(T)
-        if paths.a14_applies(mode_doc, d) and T in clock.check_grid(d) and T not in clock.scheduled_checks(d) \
+        grid = clock.time_grid(d) if paths.a17_applies(mode_doc, d) else clock.check_grid(d)     # §16.18 A17-R4
+        if paths.a14_applies(mode_doc, d) and T in grid and T not in clock.scheduled_checks(d) \
                 and now <= T + dt.timedelta(minutes=15 - t_run):
-            return clock.Window(d, clock.trigger_tag(T))
+            return clock.Window(d, clock.trigger_tag(T) if T in clock.check_grid(d) else clock.time_tag(T))
         raise Refusal("outside_span")
+
+    def _time_window(self, view, mode, mode_doc, w, hol):
+        """§16.18 A17-R4: (the window, the subject's call_id or None) of a non-scheduled candidate on an a17 day: the
+        time window X<hhmm> when the day's files give a subject and the day has no holiday-table row; else the
+        trigger candidate (a T in G(d)), or the refusal `not_due` beyond L_d."""
+        if not paths.a17_applies(mode_doc, w.day) or w.kind not in ("trigger", "time"):
+            return w, None
+        T = w.check_utc
+        subj = None
+        if not hol.any_row(w.day):
+            subj = review.time_subject(self.review_entries(view, mode, w.day), T, w.day)
+        if subj is not None:
+            return clock.Window(w.day, clock.time_tag(T)), subj["call_id"]
+        if T not in clock.check_grid(w.day):
+            raise Refusal("not_due")
+        return clock.Window(w.day, clock.trigger_tag(T)), None
 
     def _start_checks(self, view, mode_doc, params, now):
         mode = mode_doc["mode"]
@@ -226,6 +251,7 @@ class Session:
         state = view.read_json(paths.STATE_PATH)
         if state is not None and state.get("calls_enabled") is False:
             raise Refusal("calls_disabled")
+        w, subject = self._time_window(view, mode, mode_doc, w, hol)   # after R-AN-24's refusals (A17-R4)
         if witness.has_terminal(view, mode, w.call_id):
             raise Refusal("closed")
         acc = witness.accepted_attempts(view, mode, w.call_id)
@@ -251,12 +277,15 @@ class Session:
             raise Refusal("trade_open")
         if len(wake.earlier(wakes, T)) >= cap:
             raise Refusal("day_cap")
+        if w.kind == "time":                         # §16.18 A17-R4: no request; the wake names the subject
+            return w, n, records.wake_of(w, subject)
         if w.kind != "trigger":
             return w, n, records.wake_of(w)
         prov, bars = self._wake_request(T)
         if prov["status"] != "ok":
             raise Refusal(f"wake_data td_{prov['reason']}")
-        r = wake.rule(w.day, T, bars, wakes, trades, hol.any_row(w.day), cap)
+        r = wake.rule(w.day, T, bars, wakes, trades, hol.any_row(w.day), cap, subject=None,
+                      a17=paths.a17_applies(mode_doc, w.day))
         if r["result"] != "window" or r["tag"] != w.tag:
             raise Refusal("not_triggered")
         return w, n, records.wake_of(w, r["reason"], prov)
@@ -362,19 +391,30 @@ class Session:
             if wait > 0:
                 self.sleep(wait)
         open_ = None
-        if paths.a15_applies(paths.read_mode(view), w.day):     # R-AN-92: read before the first request
+        info = None
+        mode_doc = paths.read_mode(view)
+        if paths.a15_applies(mode_doc, w.day):     # R-AN-92: read before the first request
             try:
                 entries = [e for e in self.review_entries(view, mode, w.day) if e["call_id"] != w.call_id]
             except DayReadFailed:
                 self.out("error day_read")
                 return 1
-            me = {"call_id": w.call_id, "entry_utc": w.entry_utc, "exit_utc": w.exit_utc, "status": None}
+            me = {"call_id": w.call_id, "entry_utc": w.entry_utc, "exit_utc": w.exit_utc, "status": None,
+                  "kind": w.kind}
             entries = sorted(entries + [me], key=lambda e: (e["entry_utc"], e["call_id"] == w.call_id))
             entries = entries[:entries.index(me) + 1]
-            open_ = review.open_sets(entries)[0][w.call_id]
+            o_sets, eff, _closed, ext = review.open_state(entries)
+            open_ = o_sets[w.call_id]
+            if paths.a17_applies(mode_doc, w.day):  # §16.18 A17-R5: the /6 block
+                kind = "review"
+                if w.kind == "time":
+                    subj = review.time_subject(entries[:-1], w.check_utc, w.day)
+                    open_, kind = ([subj] if subj is not None else []), "time"
+                info = {"kind": kind, "cur": {t["call_id"]: (eff[t["call_id"]], t["call_id"] in ext) for t in open_},
+                        "extend_until": clock.day_end(w.day)}
         fetcher = td.Fetcher(get=self.http_get, clock=self.mono, sleep=self.sleep, now=self.now)
         ctx = context.build(view, head, mode, w, asof, params, fetcher, wake=st.get("wake") or records.wake_of(w),
-                            review_open=open_)
+                            review_open=open_, review_info=info)
         sha = context.context_sha256(ctx)
         st.update(context_sha256=sha, repo_head_sha=head, failures=0)
         self.work.mkdir(parents=True, exist_ok=True)
@@ -413,7 +453,8 @@ class Session:
             obj, errs = None, ["missing_plan"]
         else:
             p3 = plan.plan3_applies(ctx.get("schema"))
-            obj, errs = plan.validate(raw, stay_reason=plan.stay_reason_applies(ctx.get("schema")), plan3=p3)
+            obj, errs = plan.validate(raw, stay_reason=plan.stay_reason_applies(ctx.get("schema")), plan3=p3,
+                                      plan4=plan.plan4_applies(ctx.get("schema")))
             if p3 and obj is not None and obj["action"] not in review.allowed_actions(ctx):
                 obj, errs = None, ["action_not_allowed"]          # R-AN-26 (§16.18 A15)
         if errs:

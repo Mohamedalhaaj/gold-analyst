@@ -134,6 +134,17 @@ def a16_applies(mode_doc, day):
     return a is not None and day >= a
 
 
+def a17_from(mode_doc):
+    """MODE.json `a17_from` as a date, or None (§16.18 A17, R-AN-5): the first model day with time windows."""
+    v = (mode_doc or {}).get("a17_from")
+    return dt.date.fromisoformat(v) if v else None
+
+
+def a17_applies(mode_doc, day):
+    a = a17_from(mode_doc)
+    return a is not None and day >= a
+
+
 def day_cap(mode_doc, day):
     """R-AN-89 step 2's cap for model day `day`: 10 from a16_from on (§16.18 A16), else 6."""
     from . import wake

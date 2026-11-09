@@ -35,7 +35,8 @@ hypotheses, not proven rules.
 - Your stop distance is S = stop_mult × D_ref and your target distance is T = target_mult × D_ref, both from the fill
   price. The script computes S and T; you choose only the multiples.
 - Entry is at `entry_utc` and the forced exit at `exit_utc`. After the lock no stop or target moves and no exit is
-  extended; a trade ends earlier only at its stop or target, or when a later review closes or reverses it.
+  extended except by your own time decision (below); a trade ends earlier only at its stop or target, or when a later
+  review closes or reverses it.
 - `levels`: each `dist_*` is (level − P_ref) / D_ref, so +1.0 is one D_ref above the price now. `ret_*` are percent
   changes between daily closes; `vol_ratio` is the mean daily range of the last 5 days over the last 20;
   `asia.width_ratio` is today's Asia range over the median range of the same hours on earlier days. A field is null
@@ -45,8 +46,9 @@ hypotheses, not proven rules.
 - If `memory` is null, read the playbook `analyst/playbooks/v0.md`; otherwise the playbook is `memory.playbook.text`.
 
 ## Reviews
-`review` is not null when one or two of your earlier trades of this day are still open at this window's `entry_utc`.
-This window is then a review:
+`review` is not null when one or two of your earlier trades of this day are still open at this window's `entry_utc`
+(`review.kind` is then `review`, when the context has `kind`), or when this window is a time decision (`review.kind`
+is `time`, see the next section). In a review:
 - `review.open` lists each open trade: its side, entry and exit times, stop and target in dollars (`stop_usd`,
   `target_usd`), `entry_px`, the move since entry in dollars (`move_usd`) and in units of its stop (`move_r`), the
   high and low since entry, whether its stop or target seems touched, and the minutes left after this window's entry.
@@ -61,6 +63,17 @@ This window is then a review:
 - A new trade from `reverse` or `add` lasts until this window's `exit_utc`, with its stop and target as multiples of
   this window's `d_ref.D_ref`. At most two trades are open at a time.
 - Trades that overlap in time count half each in the test, so an `add` does not add a whole trade.
+- `review.open[].extended` is true for a trade you extended at its time decision; its `exit_utc` and `minutes_left`
+  are then those of the end of the trading day.
+
+## Time decisions
+When `review.kind` is `time`, this window is the 4-hour exit of one earlier trade of this day: the one trade in
+`review.open`, whose `exit_utc` is this window's `entry_utc`. Its fields are as in a review. Choose one action of
+`review.options`:
+- `extend`: the trade stays open until `review.extend_until_utc`, the end of the trading day, with the same stop and
+  target; a later review of this day can still close or reverse it;
+- `close`: the trade ends at its exit, as planned.
+Without a valid decision the trade ends at its exit. Decide on the market in the context, as for any decision.
 
 ## Output
 Write `.analyst_run/plan.json`: one JSON object, nothing else.
@@ -75,5 +88,7 @@ Write `.analyst_run/plan.json`: one JSON object, nothing else.
   `{"action": "reverse" or "add", "stop_mult": ..., "target_mult": ..., "confidence": ..., "reason_ar": "...",
   "key_risks_ar": "..."}` with the multiples above. An action not in `review.options` is refused; `buy`, `sell` and
   `stay_out` are not used in a review, and a review has no `stay_out_reason`.
+- In a time decision: `{"action": "extend" or "close", "confidence": ..., "reason_ar": "...", "key_risks_ar": "..."}`
+  with no multiples and no `stay_out_reason`.
 - `reason_ar`: Arabic, 1 to 400 characters. `key_risks_ar`: Arabic, at most 300 characters. Plain text only: no
   links, no markup, no control characters except a new line.

@@ -17,6 +17,15 @@
 // §16.18 A16 (R-AN-89, R-AN-91): for model days >= MODE.json a16_from R's day cap (step 2) and the fire guard are 10
 // instead of 6; every other step, read, request, log and secret is unchanged.
 //
+// §16.18 A17 (A17-R3, A17-R10): for model days >= MODE.json a17_from the watcher acts at the checks of G_X(d) (G(d) plus
+// L_d + 30 min .. day_end(d) − 90 min). It reads every candidate's call status and plan action (terminal on main, else
+// call file on main, else on its call branch) and adds the time windows it fired (log decision `time`). The subject of
+// T is the candidate trade (a `called` window that is not a time window) whose exit is T + 30 min, with no candidate
+// entering after its entry and before T + 30 min that is `review_close` or a `called` reverse, and an exit at most
+// day_end(d) − 60 min. R(T) then runs day_cap, the scheduled check, the holiday step, the time step 4b (a subject →
+// the time window <d>_X<hhmm>, decision `time`, no Twelve Data request, fired as a trigger), and beyond L_d nothing
+// else. `start` is authoritative.
+//
 // Secrets (Worker secrets, never in a file, a log line or a response): TD_API_KEY, FIRE_URL, FIRE_TOKEN.
 // Binding: WATCHER_LOG (Workers KV). The only route is GET /log?day=YYYY-MM-DD.
 
@@ -159,6 +168,13 @@ function inGrid(d, T) {
   return T >= first && T <= lastCheck(d) && (T - first) % (30 * MIN) === 0;
 }
 
+/** G_X(d) (§16.18 A17-R1): G(d) plus the checks L_d + 30 min .. day_end(d) − 90 min. */
+function inTimeGrid(d, T) {
+  if (!isWeekday(d)) return false;
+  const first = dayStart(d) - 90 * MIN;
+  return T >= first && T <= modelDayEnd(d) - 90 * MIN && (T - first) % (30 * MIN) === 0;
+}
+
 function mkWindow(d, name, entry, kind, exchange) {
   return { call_id: `${d}_${name}`, name, kind, exchange, entry, exit: entry + 240 * MIN, check: entry - 30 * MIN };
 }
@@ -177,6 +193,11 @@ function scheduledWindows(d) {
 
 function triggerWindow(d, T) {
   return mkWindow(d, `T${hhmm(T)}`, T + 30 * MIN, "trigger", null);
+}
+
+/** The time window of check T (§16.18 A17-R1): it enters at T + 30 min, its trade's exit. */
+function timeWindow(d, T) {
+  return mkWindow(d, `X${hhmm(T)}`, T + 30 * MIN, "time", null);
 }
 
 /** Step 4: d has a row of either exchange in the holiday table. */
@@ -249,12 +270,14 @@ function conditionsAt(T, d, bars) {
  * cap: step 2's cap of d (10 from a16_from on, §16.18 A16).
  * Returns {result: "trade_open" | "day_cap" | "window" | "none" | "trigger_due", window?, why?, g}.
  */
-function ruleR(T, d, E, O, conds, cap = DAY_CAP) {
+function ruleR(T, d, E, O, conds, cap = DAY_CAP, subject = false, a17 = false) {
   if (O.length > 0) return { result: "trade_open" };
   if (E.length >= cap) return { result: "day_cap" };
   const sched = scheduledWindows(d).find((w) => w.check === T);
   if (sched) return { result: "window", window: { ...sched, reason: null } };
   if (isHolidayDay(d)) return { result: "none", why: "holiday" };
+  if (a17 && subject) return { result: "window", window: { ...timeWindow(d, T), reason: null } }; // step 4b (A17)
+  if (a17 && T > lastCheck(d)) return { result: "none", why: "beyond_grid" };
   const g = E.length ? (T - Math.max(...E.map((w) => w.check))) / MIN : Infinity;
   if (g < 60) return { result: "none", why: "gap", g };
   if (conds === undefined) return { result: "trigger_due", g };
@@ -393,13 +416,31 @@ function prefix(mode) {
  * attempt's wake.reason. Reads stop early where the answer is already known; with `noTrades` (a model day >=
  * a15_from) no call file is read, since O(T) is not formed.
  */
-async function readWindow(io, mode, w, T, noTrades = false) {
+async function readWindow(io, mode, w, T, noTrades = false, full = false) {
   const P = prefix(mode);
   const attemptPath = `${P}attempts/${w.call_id}_1.json`;
   const callPath = `${P}calls/${w.call_id}.json`;
-  const out = { attempted: false, called: false, reason: null };
+  const out = { attempted: false, called: false, reason: null, status: null, action: null };
   const term = await readJson(io, "main", `${P}terminal/${w.call_id}.json`);
   let attempt = null;
+  if (full) {
+    // §16.18 A17-R10: the call status (terminal, else call file on main, else on its branch) and the plan action
+    const call = (await readJson(io, "main", callPath))
+      || (term ? null : await readJson(io, `claude/analyst-${mode}-call-${w.call_id}`, callPath));
+    out.status = term ? term.status : (call ? call.status : null);
+    out.called = out.status === "called";
+    out.action = call && call.plan && typeof call.plan.action === "string" ? call.plan.action : null;
+    if (term) {
+      out.attempted = Array.isArray(term.attempts) && term.attempts.length > 0;
+      if (out.attempted && w.kind === "trigger") attempt = await readJson(io, "main", attemptPath);
+    } else {
+      attempt = (await readJson(io, "main", attemptPath))
+        || (await readJson(io, `claude/analyst-${mode}-attempt-${w.call_id}-1`, attemptPath));
+      out.attempted = !!attempt;
+    }
+    if (attempt && attempt.wake && typeof attempt.wake.reason === "string") out.reason = attempt.wake.reason;
+    return out;
+  }
   if (term) {
     out.called = term.status === "called";
     out.attempted = Array.isArray(term.attempts) && term.attempts.length > 0;
@@ -478,7 +519,7 @@ async function writeLog(env, d, entry) {
 async function runCheck(scheduledMs, env, io) {
   const T = Math.floor(scheduledMs / (30 * MIN)) * (30 * MIN);
   const d = tday(T);
-  if (!inGrid(d, T)) return null;
+  if (!inTimeGrid(d, T)) return null;
   const [modeDoc, stateDoc] = await Promise.all([
     readJson(io, "main", "analyst/MODE.json"),
     readJson(io, "main", "analyst/STATE.json"),
@@ -490,6 +531,9 @@ async function runCheck(scheduledMs, env, io) {
   const a16 = modeDoc && typeof modeDoc.a16_from === "string" ? modeDoc.a16_from : null;
   const cap = a16 !== null && d >= a16 ? DAY_CAP_A16 : DAY_CAP; // A16: 10 from a16_from on
   const fireCap = a16 !== null && d >= a16 ? FIRE_CAP_A16 : FIRE_CAP;
+  const a17v = modeDoc && typeof modeDoc.a17_from === "string" ? modeDoc.a17_from : null;
+  const a17 = a17v !== null && d >= a17v && reviews; // A17: G_X(d) and the time step
+  if (!a17 && !inGrid(d, T)) return null; // beyond L_d only an A17 day acts
   const log = await readLog(env, d);
   if (log.some((e) => e.check_utc === isoZ(T))) return null; // a repeated run of a check that already acted
   const entry = { check_utc: isoZ(T), model_day: d, decision: "none", fired: false, http: null, tries: 0, utc: null };
@@ -511,9 +555,13 @@ async function runCheck(scheduledMs, env, io) {
   const firedTriggers = log
     .filter((e) => e.fired && typeof e.decision === "string" && e.decision.startsWith("trigger:"))
     .map((e) => ({ ...triggerWindow(d, Date.parse(e.check_utc)), loggedReason: e.decision.slice(8) }));
+  const firedTimes = a17
+    ? log.filter((e) => e.fired && e.decision === "time").map((e) => timeWindow(d, Date.parse(e.check_utc)))
+    : [];
   const firesToday = log.filter((e) => e.fired).length;
-  const candidates = [...scheduledWindows(d), ...firedTriggers].filter((w) => w.check < T);
-  const seen = await Promise.all(candidates.map((w) => readWindow(io, mode, w, T, reviews)));
+  const candidates = [...scheduledWindows(d), ...firedTriggers, ...firedTimes].filter((w) => w.check < T)
+    .sort((a, b) => a.entry - b.entry);
+  const seen = await Promise.all(candidates.map((w) => readWindow(io, mode, w, T, reviews, a17)));
   const E = [];
   const O = [];
   candidates.forEach((w, i) => {
@@ -521,15 +569,24 @@ async function runCheck(scheduledMs, env, io) {
     if (s.attempted) E.push({ check: w.check, kind: w.kind, reason: s.reason ?? w.loggedReason ?? null });
     if (!reviews && s.called && w.exit > T + 30 * MIN) O.push(w);
   });
+  let subject = false; // A17-R10
+  if (a17 && T + 30 * MIN <= modelDayEnd(d) - 60 * MIN) {
+    const k = candidates.findIndex((w, i) => w.kind !== "time" && w.exit === T + 30 * MIN && seen[i].called);
+    if (k >= 0) {
+      const w = candidates[k];
+      subject = !candidates.some((c, i) => c.kind !== "time" && c.entry > w.entry && c.entry < T + 30 * MIN
+        && (seen[i].status === "review_close" || (seen[i].called && seen[i].action === "reverse")));
+    }
+  }
 
-  let r = ruleR(T, d, E, O, undefined, cap);
+  let r = ruleR(T, d, E, O, undefined, cap, subject, a17);
   if (r.result === "trigger_due") {
     const td = await tdRequest(io, env, d, T);
     if (td.status !== "ok") {
       entry.decision = `td_${td.reason}`;
       return finish();
     }
-    r = ruleR(T, d, E, O, conditionsAt(T, d, td.bars), cap);
+    r = ruleR(T, d, E, O, conditionsAt(T, d, td.bars), cap, subject, a17);
   }
   if (r.result === "trade_open" || r.result === "day_cap") {
     entry.decision = r.result;
@@ -544,7 +601,7 @@ async function runCheck(scheduledMs, env, io) {
     entry.decision = "fixed"; // W1 and W2 are fired by their own routines
     return finish();
   }
-  entry.decision = w.kind === "trigger" ? `trigger:${w.reason}` : w.name;
+  entry.decision = w.kind === "trigger" ? `trigger:${w.reason}` : w.kind === "time" ? "time" : w.name;
   if (firesToday >= fireCap) {
     entry.decision = "fire_cap";
     return finish();
@@ -592,7 +649,8 @@ export default {
   },
   // Pure parts, for the tests (node:test). The runtime never calls them from outside.
   internals: {
-    tday, isWeekday, localToUtc, modelDayEnd, lastCheck, grid, inGrid, scheduledWindows, triggerWindow,
+    tday, isWeekday, localToUtc, modelDayEnd, lastCheck, grid, inGrid, inTimeGrid, scheduledWindows, triggerWindow,
+    timeWindow,
     isHolidayDay, isHolidayFor, median, conditionsAt, ruleR, tdUrl, classifyTd, tdRequest, readWindow, fire, runCheck,
     handleFetch, HOLIDAYS_CSV, INBOX_REPO, CONDITIONS,
   },
