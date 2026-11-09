@@ -1,9 +1,9 @@
 {
  "schema": "analyst-watcher-config/1",
- "exported_utc": "2026-11-06T00:45:22Z",
+ "exported_utc": "2026-11-09T18:31:15Z",
  "worker_name": "gold-analyst-watcher",
- "source_commit": "d29a41b546aaa31429a2bd85053b2df0aca2d96f",
- "script_sha256": "70242f0c9b08ad8ddac3c392add005554a6e3a8d40bd692ee63157e38649db19",
+ "source_commit": "8671c65541adfb380cc16792573798fd691ffc31",
+ "script_sha256": "55276aa9b0c38aa3af38dcfae4d25dd083a781d644dbbe5f6be09cfcbd73db31",
  "crons": [
   "1,31 * * * *"
  ],
@@ -22,6 +22,6 @@
   }
  ],
  "kv_namespace": "gold-analyst-watcher-watcher-log (binding WATCHER_LOG, created by wrangler's automatic provisioning at the first deploy)",
- "deployed_utc": "2026-11-06T00:44:54Z",
- "note": "Register §16.18 A16 (R-AN-91 export after a change of the Worker). The owner deployed watcher/ with npx --yes wrangler@4.151.1 deploy from a clean detached checkout of source_commit (the A16 build merge on gold-analyst main), no_bundle: the uploaded script is watcher/worker.js byte for byte (sha256 above); wrangler.toml unchanged; the KV binding WATCHER_LOG is inherited. Version b9446a8b-21ee-4ef7-8f55-8b06200c0b88 created 2026-11-06T00:44:54Z (deployed_utc). The three secrets set by the client on 2026-10-27 persist across the deploy: wrangler secret list shows exactly FIRE_TOKEN, FIRE_URL and TD_API_KEY; no value was read. Until MODE.json a16_from the Worker applies the cap of 6; from a16_from its day cap and fire guard are 10 (A16). Previous export: source_commit ced2ab9 (A15), deployed_utc 2026-10-29T16:16:18Z."
+ "deployed_utc": "2026-11-09T18:29:37Z",
+ "note": "Register §16.18 A17 (R-AN-91 export after a change of the Worker). The owner deployed watcher/ with npx --yes wrangler@4.151.1 deploy from a clean detached checkout of source_commit (the A17 build merge on gold-analyst main), no_bundle: the uploaded script is watcher/worker.js byte for byte (sha256 above; wrangler deploy --dry-run --outdir writes a worker.js with the same sha256); wrangler.toml unchanged; the KV binding WATCHER_LOG is inherited. Version 030e5d1f-b651-4a9e-9261-8e0146a0054f created 2026-11-09T18:29:37Z (deployed_utc). The three secrets set by the client on 2026-10-27 persist across the deploy: wrangler secret list shows exactly FIRE_TOKEN, FIRE_URL and TD_API_KEY; no value was read. Until MODE.json a17_from the Worker applies the A16 rule; from a17_from it also acts at the checks of G_X(d), the time windows X<hhmm> of trades that reach their 4-hour exit with at least an hour of the trading day left (A17-R3, A17-R10). Previous export: source_commit d29a41b (A16), deployed_utc 2026-11-06T00:44:54Z."
 }
