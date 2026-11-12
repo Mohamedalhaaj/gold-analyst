@@ -1,0 +1,91 @@
+{
+ "comment": {
+  "body_sha256": "c8838650df7cf760e9360fd5ba109ae224ec204257f2952759a6568dfdb93ee9",
+  "created_utc": "2026-11-12T13:10:31Z",
+  "id": 6824526437,
+  "issue": 1
+ },
+ "file_sha256": "df0490ce6efd371418f34734e104ad7ba4a11858b0025031e46c517cf53fa62a",
+ "id": "2026-11-12_X1130",
+ "kind": "terminal",
+ "mode": "canary",
+ "path": "analyst/canary/terminal/2026-11-12_X1130.json",
+ "push": {
+  "activity_id": 49998834520,
+  "activity_type": "branch_creation",
+  "activity_utc": "2026-11-12T11:33:30Z",
+  "actor": "Mohamedalhaaj",
+  "after": "f2c9648f2879865b759fb58c1564eda2c74e4fd7",
+  "before": "0000000000000000000000000000000000000000",
+  "ref": "refs/heads/claude/analyst-canary-call-2026-11-12_X1130",
+  "repo": "Mohamedalhaaj/gold-analyst-inbox"
+ },
+ "reason": null,
+ "run": {
+  "attempt": 1,
+  "created_utc": "2026-11-12T13:10:17Z",
+  "event": "schedule",
+  "id": 43224731487,
+  "workflow": "analyst-merge"
+ },
+ "schema": "analyst-witness/1",
+ "seq": 249,
+ "status": "accepted",
+ "terminal": {
+  "call_sha256": "84d7eea5812420be04a60d539e1de4adc12f1e4433016a17343bb23685383a32",
+  "detail": null,
+  "prev_chain_sha256": "d17868d0d3573b1d9a03c64e2fa8f0e559867df912fff9ca13000b6fa4800d90",
+  "push_sha": "f2c9648f2879865b759fb58c1564eda2c74e4fd7",
+  "status": "review_close",
+  "terminal_sha256": "df0490ce6efd371418f34734e104ad7ba4a11858b0025031e46c517cf53fa62a"
+ },
+ "window": {
+  "deadline_utc": "2026-11-12T11:45:00Z",
+  "entry_utc": "2026-11-12T12:00:00Z",
+  "time_source": "activity",
+  "time_utc": "2026-11-12T11:33:30Z",
+  "void": false
+ },
+ "writes": [
+  {
+   "path": "analyst/canary/terminal/2026-11-12_X1130.json",
+   "record": {
+    "attempts": [
+     {
+      "n": 1,
+      "path": "analyst/canary/attempts/2026-11-12_X1130_1.json",
+      "sha256": "0f4f1a5863e06e19ab9e53322858c653afbc90c33b37d48a7c3e797076478ba4",
+      "time_utc": "2026-11-12T11:31:36Z",
+      "void": false,
+      "witness_seq": 247
+     }
+    ],
+    "call": {
+     "lock_utc": "2026-11-12T11:33:30Z",
+     "path": "analyst/canary/calls/2026-11-12_X1130.json",
+     "plan_status": "review_close",
+     "push_sha": "f2c9648f2879865b759fb58c1564eda2c74e4fd7",
+     "sha256": "84d7eea5812420be04a60d539e1de4adc12f1e4433016a17343bb23685383a32",
+     "time_source": "activity",
+     "witness_seq": 248
+    },
+    "call_id": "2026-11-12_X1130",
+    "deadline_utc": "2026-11-12T11:45:00Z",
+    "detail": null,
+    "entry_utc": "2026-11-12T12:00:00Z",
+    "head_sha": "3c1ce1516468aca34d995331e7576f61216954af",
+    "mode": "canary",
+    "model_day": "2026-11-12",
+    "prev_chain_sha256": "d17868d0d3573b1d9a03c64e2fa8f0e559867df912fff9ca13000b6fa4800d90",
+    "run_id": 43224731487,
+    "schema": "analyst-terminal/1",
+    "status": "review_close",
+    "window": "X",
+    "writer": "merge",
+    "written_utc": "2026-11-12T13:10:31Z"
+   },
+   "sha256": "df0490ce6efd371418f34734e104ad7ba4a11858b0025031e46c517cf53fa62a"
+  }
+ ],
+ "written_utc": "2026-11-12T13:10:31Z"
+}
