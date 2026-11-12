@@ -1,0 +1,25 @@
+{
+ "call_id": "2026-11-12_X1730",
+ "code_sha8": "d751adff",
+ "draw_id": "2026-11-12_X1730",
+ "kind": "call",
+ "manifest_sha256": "d751adff915bec74e89ed8a889b7319936e9ee1dffbfae2facb464c08fd6b8ed",
+ "mode": "canary",
+ "n": 1,
+ "repo_head_sha": "c40ad6f9a8c513a8359d0f64246d6bbcef80ab95",
+ "routine_prompt_sha256": "8ea40e411ddee6804b4f3292e350ecbbe2a4393d9b37f0dd1fffa8d9433bf8d3",
+ "schema": "analyst-attempt/2",
+ "self_reported": {
+  "cc_version": "2.1.322 (Claude Code)",
+  "model": null,
+  "note": "self-reported, unverified",
+  "session_id": "281041a3-4e8e-5d74-8338-7ddb5f8a1bdc",
+  "started_utc": "2026-11-12T17:31:34Z"
+ },
+ "wake": {
+  "check_utc": "2026-11-12T17:30:00Z",
+  "kind": "time",
+  "reason": "2026-11-12_T1330",
+  "td": null
+ }
+}

@@ -1,0 +1,50 @@
+{
+ "comment": {
+  "body_sha256": "6874329ac0a37ea8efa4ac782e1a44f2d59d59b2445638920b98e901dbaafcb1",
+  "created_utc": "2026-11-12T21:03:20Z",
+  "id": 6835875443,
+  "issue": 1
+ },
+ "file_sha256": "912c095a340f97f838e9b6fedeca93e3e53416be2bf5593f1faf293b00ec76fc",
+ "id": "2026-11-10_W2",
+ "kind": "lesson",
+ "mode": "canary",
+ "path": "analyst/canary/lessons/2026-11-10_W2.json",
+ "push": {
+  "activity_id": 50037565000,
+  "activity_type": "branch_creation",
+  "activity_utc": "2026-11-12T16:41:25Z",
+  "actor": "Mohamedalhaaj",
+  "after": "9aaacd9c8ad489c1063436945027111330cdafa1",
+  "before": "0000000000000000000000000000000000000000",
+  "ref": "refs/heads/claude/analyst-canary-lesson-2026-11-10_W2",
+  "repo": "Mohamedalhaaj/gold-analyst-inbox"
+ },
+ "reason": null,
+ "run": {
+  "attempt": 1,
+  "created_utc": "2026-11-12T21:03:02Z",
+  "event": "schedule",
+  "id": 43306333764,
+  "workflow": "analyst-merge"
+ },
+ "schema": "analyst-witness/1",
+ "seq": 260,
+ "status": "accepted",
+ "terminal": null,
+ "window": {
+  "deadline_utc": null,
+  "entry_utc": null,
+  "time_source": "activity",
+  "time_utc": "2026-11-12T16:41:25Z",
+  "void": false
+ },
+ "writes": [
+  {
+   "path": "analyst/canary/lessons/2026-11-10_W2.json",
+   "record": null,
+   "sha256": "912c095a340f97f838e9b6fedeca93e3e53416be2bf5593f1faf293b00ec76fc"
+  }
+ ],
+ "written_utc": "2026-11-12T21:03:20Z"
+}
