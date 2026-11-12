@@ -1,0 +1,35 @@
+{
+ "attempts": [
+  {
+   "n": 1,
+   "path": "analyst/canary/attempts/2026-11-12_W2_1.json",
+   "sha256": "e8f99f2f28477952d0e490fb5df71583db34e0a6bf78829f2247727916a40edf",
+   "time_utc": "2026-11-12T13:51:40Z",
+   "void": false,
+   "witness_seq": 253
+  }
+ ],
+ "call": {
+  "lock_utc": "2026-11-12T13:53:30Z",
+  "path": "analyst/canary/calls/2026-11-12_W2.json",
+  "plan_status": "review_hold",
+  "push_sha": "aaeb9dbbf9100b19b873648019d89f6d4782cd4a",
+  "sha256": "44ff6065f46aec2d2a23f2a592821f9da9a5c4669c7f953ffc54b49e35c3f21c",
+  "time_source": "activity",
+  "witness_seq": 254
+ },
+ "call_id": "2026-11-12_W2",
+ "deadline_utc": "2026-11-12T14:15:00Z",
+ "detail": null,
+ "entry_utc": "2026-11-12T14:30:00Z",
+ "head_sha": "fdf73f98640a0a160164570d40d3f02d8ca9943c",
+ "mode": "canary",
+ "model_day": "2026-11-12",
+ "prev_chain_sha256": "b9908046cdf54c518fe92cea461a78a0c98c38c370a987560640b629b5d65a1c",
+ "run_id": 43233045348,
+ "schema": "analyst-terminal/1",
+ "status": "review_hold",
+ "window": "W2",
+ "writer": "merge",
+ "written_utc": "2026-11-12T14:02:29Z"
+}
