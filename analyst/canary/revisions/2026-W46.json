@@ -1,0 +1,10 @@
+{
+ "effective_from": "2026-11-16",
+ "iso_week": "2026-W46",
+ "playbook_sha256": "8b3ddd54c042233ea78944428aaa00697ef6d04189ae4178991ca51709e16c9c",
+ "schema": "analyst-revision/1",
+ "status": "written",
+ "version": 2,
+ "writer": "merge",
+ "written_utc": "2026-11-14T23:19:11Z"
+}
