@@ -1,0 +1,20 @@
+{
+ "call_id": "2026-11-16_T0600",
+ "code_sha8": "d751adff",
+ "draw_id": "lesson-2026-11-16_T0600",
+ "kind": "lesson",
+ "manifest_sha256": "d751adff915bec74e89ed8a889b7319936e9ee1dffbfae2facb464c08fd6b8ed",
+ "mode": "canary",
+ "n": 1,
+ "repo_head_sha": "9e6af8869ea6d8a83cf0286ebaf84ab1136052d4",
+ "routine_prompt_sha256": "8ea40e411ddee6804b4f3292e350ecbbe2a4393d9b37f0dd1fffa8d9433bf8d3",
+ "schema": "analyst-attempt/2",
+ "self_reported": {
+  "cc_version": "2.1.326 (Claude Code)",
+  "model": null,
+  "note": "self-reported, unverified",
+  "session_id": "1f13919d-c672-598b-a9be-6919cce1f3b8",
+  "started_utc": "2026-11-17T16:40:29Z"
+ },
+ "wake": null
+}
