@@ -1,0 +1,35 @@
+{
+ "attempts": [
+  {
+   "n": 1,
+   "path": "analyst/canary/attempts/2026-11-17_W2_1.json",
+   "sha256": "5a1d8d343e8ed7e7b49047aefca01885a0531c439b33ebc01ee77970b073568f",
+   "time_utc": "2026-11-17T13:51:36Z",
+   "void": false,
+   "witness_seq": 317
+  }
+ ],
+ "call": {
+  "lock_utc": "2026-11-17T13:53:32Z",
+  "path": "analyst/canary/calls/2026-11-17_W2.json",
+  "plan_status": "stay_out",
+  "push_sha": "c0a938d4750b62e9039dade14135b5e291b15e8f",
+  "sha256": "acb0a5ad4463bb648fe8db192e5a65173a9f7f5e56e401842da7652a25eba7a8",
+  "time_source": "activity",
+  "witness_seq": 318
+ },
+ "call_id": "2026-11-17_W2",
+ "deadline_utc": "2026-11-17T14:15:00Z",
+ "detail": null,
+ "entry_utc": "2026-11-17T14:30:00Z",
+ "head_sha": "6ff514531f83b496b9e919671b6291a2b5246f81",
+ "mode": "canary",
+ "model_day": "2026-11-17",
+ "prev_chain_sha256": "325236412c58c88f0c9d0e2e8d86508680053f7bad434747c20fc3ff63352762",
+ "run_id": 44107397757,
+ "schema": "analyst-terminal/1",
+ "status": "stay_out",
+ "window": "W2",
+ "writer": "merge",
+ "written_utc": "2026-11-17T14:50:01Z"
+}
