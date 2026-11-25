@@ -1,0 +1,35 @@
+{
+ "attempts": [
+  {
+   "n": 1,
+   "path": "analyst/canary/attempts/2026-11-25_X1130_1.json",
+   "sha256": "91a89c7a37b17359d9fb9bfadffb84486af1dba78a972d74852c3e3fe5f213da",
+   "time_utc": "2026-11-25T11:31:38Z",
+   "void": false,
+   "witness_seq": 480
+  }
+ ],
+ "call": {
+  "lock_utc": "2026-11-25T11:33:33Z",
+  "path": "analyst/canary/calls/2026-11-25_X1130.json",
+  "plan_status": "review_extend",
+  "push_sha": "97c2256f8d828de21a6a2a89ff7b94c71c2859a4",
+  "sha256": "537705bcbc3eda6b5e6cc8b40eadd85098f55c50bf3393944299adbf0e399ecd",
+  "time_source": "activity",
+  "witness_seq": 481
+ },
+ "call_id": "2026-11-25_X1130",
+ "deadline_utc": "2026-11-25T11:45:00Z",
+ "detail": null,
+ "entry_utc": "2026-11-25T12:00:00Z",
+ "head_sha": "fbeacf6a289a4aacc1aff23d08e8ddc7188c0883",
+ "mode": "canary",
+ "model_day": "2026-11-25",
+ "prev_chain_sha256": "b93dc73a6f59a4709f4750da66dca56f6d1a01bef6bf1f4cb4500c1f3d72e608",
+ "run_id": 45666046512,
+ "schema": "analyst-terminal/1",
+ "status": "review_extend",
+ "window": "X",
+ "writer": "merge",
+ "written_utc": "2026-11-25T17:33:59Z"
+}
