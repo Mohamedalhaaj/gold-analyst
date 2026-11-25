@@ -1,0 +1,19 @@
+{
+ "call_id": "2026-11-24_W2b",
+ "d_W": -15.4425,
+ "entry_utc": "2026-11-24T16:30:00Z",
+ "exit_utc": "2026-11-24T20:30:00Z",
+ "head_sha": "c43978406496a80b436d6a772d95e84e29b90e46",
+ "mid_entry": 3566.9975,
+ "mid_entry_src": "open",
+ "mid_exit": 3551.5550000000003,
+ "mid_exit_src": "close",
+ "mode": "canary",
+ "model_day": "2026-11-24",
+ "run_id": 45541173475,
+ "schema": "analyst-twin/1",
+ "settled_utc": "2026-11-25T03:36:53Z",
+ "status": "final",
+ "terminal_status": "missed:trigger",
+ "window": "W2b"
+}
