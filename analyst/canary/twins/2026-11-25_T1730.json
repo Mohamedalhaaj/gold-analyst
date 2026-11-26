@@ -1,0 +1,19 @@
+{
+ "call_id": "2026-11-25_T1730",
+ "d_W": 74.641,
+ "entry_utc": "2026-11-25T18:00:00Z",
+ "exit_utc": "2026-11-25T22:00:00Z",
+ "head_sha": "3e2759dea7d31b981518b2ee5be557a534970fb3",
+ "mid_entry": 3514.869,
+ "mid_entry_src": "open",
+ "mid_exit": 3589.51,
+ "mid_exit_src": "close",
+ "mode": "canary",
+ "model_day": "2026-11-25",
+ "run_id": 45748487991,
+ "schema": "analyst-twin/1",
+ "settled_utc": "2026-11-26T03:22:34Z",
+ "status": "final",
+ "terminal_status": "review_close",
+ "window": "T"
+}
