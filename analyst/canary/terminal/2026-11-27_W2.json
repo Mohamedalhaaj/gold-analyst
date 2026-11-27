@@ -1,0 +1,18 @@
+{
+ "attempts": [],
+ "call": null,
+ "call_id": "2026-11-27_W2",
+ "deadline_utc": "2026-11-27T14:15:00Z",
+ "detail": null,
+ "entry_utc": "2026-11-27T14:30:00Z",
+ "head_sha": "749e4aa5e16ac0b0e582bc3ba5ee835ef09eed7a",
+ "mode": "canary",
+ "model_day": "2026-11-27",
+ "prev_chain_sha256": "7f05d6cefa399d2cc0947ec53ce975d73e487a499be31322d5de81593eaa8daa",
+ "run_id": 46026931855,
+ "schema": "analyst-terminal/1",
+ "status": "skipped:holiday",
+ "window": "W2",
+ "writer": "closer",
+ "written_utc": "2026-11-27T15:40:16Z"
+}
