@@ -1,0 +1,20 @@
+{
+ "call_id": null,
+ "code_sha8": "d751adff",
+ "draw_id": "revision-v4",
+ "kind": "revision",
+ "manifest_sha256": "d751adff915bec74e89ed8a889b7319936e9ee1dffbfae2facb464c08fd6b8ed",
+ "mode": "canary",
+ "n": 1,
+ "repo_head_sha": "55cc5b1af7ab00ca1791a390df6088ae9e727247",
+ "routine_prompt_sha256": "8ea40e411ddee6804b4f3292e350ecbbe2a4393d9b37f0dd1fffa8d9433bf8d3",
+ "schema": "analyst-attempt/2",
+ "self_reported": {
+  "cc_version": "2.1.332 (Claude Code)",
+  "model": null,
+  "note": "self-reported, unverified",
+  "session_id": "e7ebbcf4-1c4a-57d0-be1c-6aa2fb23f662",
+  "started_utc": "2026-11-28T18:06:14Z"
+ },
+ "wake": null
+}
